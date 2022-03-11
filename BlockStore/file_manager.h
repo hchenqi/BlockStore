@@ -11,18 +11,16 @@ BEGIN_NAMESPACE(BlockStore)
 
 class FileManager {
 public:
-	FileManager(const char file[]) : database(file) {}
+	FileManager(const char file[]);
 private:
-	Sqlite::Database database;
+	Sqlite::Database db;
 public:
-	Metadata GetMetadata() {}
-	void SetMetadata(Metadata metadata) {}
+	Metadata GetMetadata();
+	void SetMetadata(Metadata metadata);
 public:
-	data_t CreateBlock(std::vector<byte> data) {}
-	std::pair<byte*, size_t> GetBlockData(data_t block_index) {}
-	void SetBlockData(data_t block_index, std::vector<byte> data) {}
-public:
-
+	data_t CreateBlock(std::vector<byte> data);
+	std::pair<byte*, size_t> GetBlockData(data_t block_index);
+	void SetBlockData(data_t block_index, std::vector<byte> data);
 };
 
 

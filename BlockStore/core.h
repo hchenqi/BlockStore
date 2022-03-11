@@ -22,6 +22,7 @@ using uchar = unsigned char;
 using ushort = unsigned short;
 using uint = unsigned int;
 using uint64 = unsigned long long;
+using int64 = long long;
 using wchar = wchar_t;
 using byte = std::byte;
 

@@ -44,18 +44,47 @@ Database::~Database() {
 	res << sqlite3_close(AsSqliteDb(db));
 }
 
-void Database::Execute(Query& query) {
+void Database::PrepareQuery(Query& query) {
 	if (query.command == nullptr) {
 		query.db = db;
-		res << sqlite3_prepare(AsSqliteDb(db), query.c_str(), (int)query.length(), AsSqliteStmt(&query.command), nullptr);
+		res << sqlite3_prepare_v2(AsSqliteDb(db), query.c_str(), (int)query.length(), AsSqliteStmt(&query.command), nullptr);
 	} else if (query.db != db) {
 		throw std::invalid_argument("query database handle mismatch");
 	}
 	res << sqlite3_reset(AsSqliteStmt(query.command));
+	query.para_num = 1;
+}
+
+void Database::ExecuteQuery(Query& query) {
+	res << sqlite3_step(AsSqliteStmt(query.command));
+}
+
+void Database::Bind(Query& query, uint64 value) {
+	res << sqlite3_bind_int64(AsSqliteStmt(query.command), query.para_num++, value);
+}
+
+void Database::Bind(Query& query, BlobSize value) {
+	res << sqlite3_bind_zeroblob(AsSqliteStmt(query.command), query.para_num++, value.size);
 }
 
 data_t Database::GetLastInsertID() {
 	return sqlite3_last_insert_rowid(AsSqliteDb(db));
+}
+
+std::vector<byte> Database::ReadBlob(const char table[], const char column[], uint64 row) {
+	sqlite3_blob* blob;
+	res << sqlite3_blob_open(AsSqliteDb(db), "main", table, column, row, false, &blob);
+	std::vector<byte> data(sqlite3_blob_bytes(blob));
+	res << sqlite3_blob_read(blob, data.data(), data.size(), 0);
+	res << sqlite3_blob_close(blob);
+	return data;
+}
+
+void Database::WriteBlob(const char table[], const char column[], uint64 row, std::vector<byte> data) {
+	sqlite3_blob* blob;
+	res << sqlite3_blob_open(AsSqliteDb(db), "main", table, column, row, true, &blob);
+	res << sqlite3_blob_write(blob, data.data(), data.size(), 0);
+	res << sqlite3_blob_close(blob);
 }
 
 
