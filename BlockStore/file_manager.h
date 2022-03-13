@@ -14,12 +14,13 @@ public:
 	FileManager(const char file[]);
 private:
 	Sqlite::Database db;
+	Metadata metadata;
 public:
-	Metadata GetMetadata();
-	void SetMetadata(Metadata metadata);
+	Metadata& GetMetadata() { return metadata; }
+	void MetadataUpdated();
 public:
-	data_t CreateBlock(std::vector<byte> data);
-	std::pair<byte*, size_t> GetBlockData(data_t block_index);
+	data_t CreateBlock();
+	std::vector<byte> GetBlockData(data_t block_index);
 	void SetBlockData(data_t block_index, std::vector<byte> data);
 };
 

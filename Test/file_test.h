@@ -1,12 +1,12 @@
-#include "BlockStore/sqlite_helper.h"
+#include "BlockStore/file_manager.h"
 
 
-using namespace BlockStore::Sqlite;
+using namespace BlockStore;
 
 
 int main() {
-	Query init_table = "";
-
-	Database db("file_test.db");
-
+	FileManager file("file_test.db");
+	file.GetMetadata().gc_phase = GcPhase::Sweep;
+	file.MetadataUpdated();
+	return 0;
 }

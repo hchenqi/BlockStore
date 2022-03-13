@@ -48,7 +48,7 @@ Database::Database(const char file[]) : db(nullptr) {
 }
 
 Database::~Database() {
-	res << sqlite3_close(AsSqliteDb(db));
+	res << sqlite3_close_v2(AsSqliteDb(db));
 }
 
 void Database::PrepareQuery(Query& query) {

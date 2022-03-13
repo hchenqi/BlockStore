@@ -20,6 +20,25 @@ template<class T> void Save(BlockSaveContext& context, const T& object) { layout
 
 
 template<class T>
+std::vector<byte> Serialize(const T& object) {
+	BlockSizeContext size_context;
+	Size(size_context, object);
+	std::vector<byte> data(size_context.GetSize());
+	BlockSaveContext context(data.data(), data.size());
+	Save(context, object);
+	return data;
+}
+
+template<class T>
+T Deserialize(std::vector<byte> data) {
+	T object;
+	BlockLoadContext context(data.data(), data.size());
+	Load(context, object);
+	return object;
+}
+
+
+template<class T>
 struct layout_traits<T, std::enable_if_t<has_trivial_layout<T>>> {
 	static void Size(BlockSizeContext& context, const T& object) { context.add(object); }
 	static void Load(BlockLoadContext& context, T& object) { context.read(object); }
