@@ -4,6 +4,7 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -54,20 +55,20 @@ public:
 	}
 	template<class T, class... Ts>
 	T ExecuteForOne(Query& query, Ts... para) {
-		PrepareQuery(query);
-		(Bind(query, para), ...);
+		PrepareQuery(query); (Bind(query, para), ...);
 		if (ExecuteQuery(query) == false) { throw std::runtime_error("sqlite error"); }
-		T result;
-		Read(query, result);
-		return result;
+		T result; Read(query, result); return result;
+	}
+	template<class T, class... Ts>
+	std::optional<T> ExecuteForOneOrNone(Query& query, Ts... para) {
+		PrepareQuery(query); (Bind(query, para), ...);
+		if (ExecuteQuery(query) == false) { return {}; }
+		T result; Read(query, result); return result;
 	}
 	template<class T, class... Ts>
 	std::vector<T> ExecuteForMultiple(Query& query, Ts... para) {
-		PrepareQuery(query);
-		(Bind(query, para), ...);
-		std::vector<T> result;
-		while (ExecuteQuery(query)) { Read(query, result.emplace_back()); }
-		return result;
+		PrepareQuery(query); (Bind(query, para), ...);
+		std::vector<T> result; while (ExecuteQuery(query)) { Read(query, result.emplace_back()); } return result;
 	}
 
 public:
