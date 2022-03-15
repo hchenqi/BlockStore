@@ -97,10 +97,6 @@ void Database::Read(Query& query, std::vector<byte>& value) {
 	value.assign(data, data + size);
 }
 
-data_t Database::GetLastInsertID() {
-	return sqlite3_last_insert_rowid(AsSqliteDb(db));
-}
-
 
 END_NAMESPACE(Sqlite)
 

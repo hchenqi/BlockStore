@@ -4,7 +4,6 @@
 
 #include <string>
 #include <vector>
-#include <optional>
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -60,19 +59,10 @@ public:
 		T result; Read(query, result); return result;
 	}
 	template<class T, class... Ts>
-	std::optional<T> ExecuteForOneOrNone(Query& query, Ts... para) {
-		PrepareQuery(query); (Bind(query, para), ...);
-		if (ExecuteQuery(query) == false) { return {}; }
-		T result; Read(query, result); return result;
-	}
-	template<class T, class... Ts>
 	std::vector<T> ExecuteForMultiple(Query& query, Ts... para) {
 		PrepareQuery(query); (Bind(query, para), ...);
 		std::vector<T> result; while (ExecuteQuery(query)) { Read(query, result.emplace_back()); } return result;
 	}
-
-public:
-	data_t GetLastInsertID();
 };
 
 
