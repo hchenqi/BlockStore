@@ -2,8 +2,7 @@
 
 #include "metadata.h"
 #include "sqlite_helper.h"
-
-#include <vector>
+#include "serialize.h"
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -20,8 +19,8 @@ public:
 	void MetadataUpdated();
 public:
 	data_t CreateBlock();
-	std::vector<byte> GetBlockData(data_t block_index);
-	void SetBlockData(data_t block_index, std::vector<byte> data);
+	block_data GetBlockData(data_t block_index);
+	void SetBlockData(data_t block_index, block_data block_data);
 public:
 	void StartGC();
 };

@@ -27,13 +27,17 @@ constexpr void align_offset(byte*& data) {
 struct BlockSizeContext {
 private:
 	data_t size;
+	data_t index_size;
 public:
-	BlockSizeContext() : size(0) {}
+	BlockSizeContext() : size(0), index_size(0) {}
 public:
 	template<class T> void add(const T&) { align_offset<T>(size); size += sizeof(T); }
 	template<class T> void add(T object[], data_t count) { align_offset<T>(size); size += sizeof(T) * count; }
 public:
+	void add_index() { index_size++; }
+public:
 	data_t GetSize() const { return size; }
+	data_t GetIndexSize() const { return index_size; }
 };
 
 
@@ -41,10 +45,15 @@ struct BlockLoadContext {
 private:
 	const byte* curr;
 	const byte* end;
+	const data_t* index_curr;
+	const data_t* index_end;
 public:
-	BlockLoadContext(const byte* begin, data_t length) : curr(begin), end(begin + length) {}
+	BlockLoadContext(const byte* begin, data_t length, const data_t* index_begin, data_t index_length) :
+		curr(begin), end(begin + length), index_curr(index_begin), index_end(index_begin + index_length) {
+	}
 private:
-	void CheckOffset(const byte* offset) { if (offset > end) { throw std::runtime_error("block size mismatch"); } }
+	void CheckOffset(const byte* offset) { if (offset > end) { throw std::runtime_error("block load error"); } }
+	void CheckIndexOffset(const data_t* offset) { if (offset > index_end) { throw std::runtime_error("block load error"); } }
 public:
 	template<class T>
 	void read(T& object) {
@@ -56,6 +65,15 @@ public:
 		align_offset<T>(curr); const byte* next = curr + sizeof(T) * count; CheckOffset(next);
 		memcpy(object, curr, sizeof(T) * count); curr = next;
 	}
+public:
+	void read_index(data_t& index) {
+		const data_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
+		memcpy(&index, index_curr, sizeof(data_t)); index_curr = index_next;
+	}
+	void read_index(data_t index[], data_t count) {
+		const data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
+		memcpy(index, index_curr, sizeof(data_t) * count); index_curr = index_next;
+	}
 };
 
 
@@ -63,10 +81,15 @@ struct BlockSaveContext {
 private:
 	byte* curr;
 	byte* end;
+	data_t* index_curr;
+	data_t* index_end;
 public:
-	BlockSaveContext(byte* begin, data_t length) : curr(begin), end(begin + length) {}
+	BlockSaveContext(byte* begin, data_t length, data_t* index_begin, data_t index_length) :
+		curr(begin), end(begin + length), index_curr(index_begin), index_end(index_begin + index_length) {
+	}
 private:
-	void CheckOffset(const byte* offset) { if (offset > end) { throw std::runtime_error("block size mismatch"); } }
+	void CheckOffset(const byte* offset) { if (offset > end) { throw std::runtime_error("block save error"); } }
+	void CheckIndexOffset(const data_t* offset) { if (offset > index_end) { throw std::runtime_error("block save error"); } }
 public:
 	template<class T>
 	void write(const T& object) {
@@ -77,6 +100,15 @@ public:
 	void write(const T object[], data_t count) {
 		align_offset<T>(curr); byte* next = curr + sizeof(T) * count; CheckOffset(next);
 		memcpy(curr, object, sizeof(T) * count); curr = next;
+	}
+public:
+	void write_index(const data_t& index) {
+		data_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
+		memcpy(index_curr, &index, sizeof(data_t)); index_curr = index_next;
+	}
+	void write_index(const data_t index[], data_t count) {
+		data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
+		memcpy(index_curr, index, sizeof(data_t) * count); index_curr = index_next;
 	}
 };
 

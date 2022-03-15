@@ -10,7 +10,7 @@ enum GcPhase : uchar { Idle, Scan, Sweep };
 
 
 struct Metadata {
-	data_t root_block_index;
+	data_t root_index;
 	bool gc_mark;
 	GcPhase gc_phase;
 };

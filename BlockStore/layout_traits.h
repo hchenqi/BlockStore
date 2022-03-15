@@ -14,28 +14,9 @@ struct layout_traits {
 	static void Save(BlockSaveContext& context, const T& object) {}
 };
 
-template<class T> void Size(BlockSizeContext& context, const T& object) { layout_traits<T>::Size(context, object); }
-template<class T> void Load(BlockLoadContext& context, T& object) { layout_traits<T>::Load(context, object); }
-template<class T> void Save(BlockSaveContext& context, const T& object) { layout_traits<T>::Save(context, object); }
-
-
-template<class T>
-std::vector<byte> Serialize(const T& object) {
-	BlockSizeContext size_context;
-	Size(size_context, object);
-	std::vector<byte> data(size_context.GetSize());
-	BlockSaveContext context(data.data(), data.size());
-	Save(context, object);
-	return data;
-}
-
-template<class T>
-T Deserialize(std::vector<byte> data) {
-	T object;
-	BlockLoadContext context(data.data(), data.size());
-	Load(context, object);
-	return object;
-}
+template<class T> inline void Size(BlockSizeContext& context, const T& object) { layout_traits<T>::Size(context, object); }
+template<class T> inline void Load(BlockLoadContext& context, T& object) { layout_traits<T>::Load(context, object); }
+template<class T> inline void Save(BlockSaveContext& context, const T& object) { layout_traits<T>::Save(context, object); }
 
 
 template<class T>

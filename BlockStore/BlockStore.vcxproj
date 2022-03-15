@@ -165,6 +165,7 @@
     <ClInclude Include="layout_traits.h" />
     <ClInclude Include="layout_traits_stl.h" />
     <ClInclude Include="metadata.h" />
+    <ClInclude Include="serialize.h" />
     <ClInclude Include="sqlite_helper.h" />
     <ClInclude Include="uncopyable.h" />
   </ItemGroup>
