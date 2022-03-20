@@ -41,42 +41,6 @@ public:
 };
 
 
-struct BlockLoadContext {
-private:
-	const byte* curr;
-	const byte* end;
-	const data_t* index_curr;
-	const data_t* index_end;
-public:
-	BlockLoadContext(const byte* begin, data_t length, const data_t* index_begin, data_t index_length) :
-		curr(begin), end(begin + length), index_curr(index_begin), index_end(index_begin + index_length) {
-	}
-private:
-	void CheckOffset(const byte* offset) { if (offset > end) { throw std::runtime_error("block load error"); } }
-	void CheckIndexOffset(const data_t* offset) { if (offset > index_end) { throw std::runtime_error("block load error"); } }
-public:
-	template<class T>
-	void read(T& object) {
-		align_offset<T>(curr); const byte* next = curr + sizeof(T); CheckOffset(next);
-		memcpy(&object, curr, sizeof(T)); curr = next;
-	}
-	template<class T>
-	void read(T object[], data_t count) {
-		align_offset<T>(curr); const byte* next = curr + sizeof(T) * count; CheckOffset(next);
-		memcpy(object, curr, sizeof(T) * count); curr = next;
-	}
-public:
-	void read_index(data_t& index) {
-		const data_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
-		memcpy(&index, index_curr, sizeof(data_t)); index_curr = index_next;
-	}
-	void read_index(data_t index[], data_t count) {
-		const data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
-		memcpy(index, index_curr, sizeof(data_t) * count); index_curr = index_next;
-	}
-};
-
-
 struct BlockSaveContext {
 private:
 	byte* curr;
@@ -109,6 +73,42 @@ public:
 	void write_index(const data_t index[], data_t count) {
 		data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
 		memcpy(index_curr, index, sizeof(data_t) * count); index_curr = index_next;
+	}
+};
+
+
+struct BlockLoadContext {
+private:
+	const byte* curr;
+	const byte* end;
+	const data_t* index_curr;
+	const data_t* index_end;
+public:
+	BlockLoadContext(const byte* begin, data_t length, const data_t* index_begin, data_t index_length) :
+		curr(begin), end(begin + length), index_curr(index_begin), index_end(index_begin + index_length) {
+	}
+private:
+	void CheckOffset(const byte* offset) { if (offset > end) { throw std::runtime_error("block load error"); } }
+	void CheckIndexOffset(const data_t* offset) { if (offset > index_end) { throw std::runtime_error("block load error"); } }
+public:
+	template<class T>
+	void read(T& object) {
+		align_offset<T>(curr); const byte* next = curr + sizeof(T); CheckOffset(next);
+		memcpy(&object, curr, sizeof(T)); curr = next;
+	}
+	template<class T>
+	void read(T object[], data_t count) {
+		align_offset<T>(curr); const byte* next = curr + sizeof(T) * count; CheckOffset(next);
+		memcpy(object, curr, sizeof(T) * count); curr = next;
+	}
+public:
+	void read_index(data_t& index) {
+		const data_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
+		memcpy(&index, index_curr, sizeof(data_t)); index_curr = index_next;
+	}
+	void read_index(data_t index[], data_t count) {
+		const data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
+		memcpy(index, index_curr, sizeof(data_t) * count); index_curr = index_next;
 	}
 };
 
