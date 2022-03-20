@@ -51,7 +51,13 @@
     <ClInclude Include="metadata.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="serialize.h">
+    <ClInclude Include="trivial_serializer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="block_data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="block_cache_new.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -63,6 +69,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="file_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="block_ref.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

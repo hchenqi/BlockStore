@@ -2,7 +2,7 @@
 
 #include "metadata.h"
 #include "sqlite_helper.h"
-#include "serialize.h"
+#include "block_data.h"
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -19,8 +19,8 @@ public:
 	void MetadataUpdated();
 public:
 	data_t CreateBlock();
-	block_data GetBlockData(data_t block_index);
 	void SetBlockData(data_t block_index, block_data block_data);
+	block_data GetBlockData(data_t block_index);
 public:
 	void StartGC();
 };

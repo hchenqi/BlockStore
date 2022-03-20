@@ -28,5 +28,7 @@ using byte = std::byte;
 
 using data_t = uint64;
 
+static constexpr data_t block_index_invalid = -1;
+
 
 END_NAMESPACE(BlockStore)
