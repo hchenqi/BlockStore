@@ -13,9 +13,8 @@ class NewBlockCache {
 private:
 	struct BlockEntry {
 		union {
-			data_t ref_count;
-			data_t next_index = block_index_invalid;
-			data_t const_block_index;
+			data_t next_index = block_index_invalid;  // as unused entry
+			data_t file_index;  // as saved block
 		};
 		std::shared_ptr<void> block;
 	};
@@ -33,31 +32,23 @@ private:
 public:
 	data_t Add(std::shared_ptr<void> ptr) {
 		BlockEntry& entry = AllocateEntry();
-		data_t index = entry.next_index; entry.block = std::move(ptr); entry.ref_count = 1;
+		data_t index = entry.next_index; entry.block = std::move(ptr);
 		return index;
 	}
 	const std::shared_ptr<void>& Get(data_t index) {
 		return cache[index].block;
 	}
-
-
-	void IncRefNewBlock(data_t index) {
-		++cache[index].ref_count;
+	std::shared_ptr<void> Save(data_t index, data_t file_index) {
+		cache[index].file_index = file_index;
+		return std::move(cache[index].block);
 	}
-	void DecRefNewBlock(data_t index) {
-		if (--cache[index].ref_count == 0) { DeallocateEntry(index); }
-	}
-	bool IsNewBlockSaved(data_t index) {
+	bool IsSaved(data_t index) {
 		return cache[index].block == nullptr;
 	}
-	void SaveNewBlock(data_t index, data_t block_index) {
-		cache[index].const_block_index = block_index;
-		cache[index].block.reset();
+	data_t GetFileIndex(data_t index) {
+		return cache[index].file_index;
 	}
-	data_t GetSavedBlockIndex(data_t index) {
-		return cache[index].const_block_index;
-	}
-	void ClearNewBlock() {
+	void Clear() {
 		cache.clear(); next_index = block_index_invalid;
 	}
 };

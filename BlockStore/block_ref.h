@@ -8,42 +8,48 @@
 
 BEGIN_NAMESPACE(BlockStore)
 
-class BlockManager;
+
+template<class T = void>
+class block_ref;
 
 
-class block_ref {
+template<>
+class block_ref<> {
 private:
-	friend class BlockManager;
+	friend struct BlockManager;
+
 private:
-	block_ref(BlockManager& manager, data_t block_index) : manager(&manager), index(block_index) { if (empty()) { this->manager = nullptr; } }
+	block_ref(data_t block_index) : stored(block_index != block_index_invalid), index(block_index) {}
 public:
-	block_ref() : manager(nullptr), index(block_index_invalid) {}
-	block_ref(block_ref&& ref) noexcept : manager(ref.manager), index(ref.index) { ref.manager = nullptr; ref.index = block_index_invalid; }
-	block_ref(const block_ref& ref) : manager(ref.manager), index(ref.index) {}
-	~block_ref() { if () {} else {} }
-public:
-	void swap(block_ref& other) noexcept { std::swap(manager, other.manager); std::swap(index, other.index); }
-	block_ref& operator=(block_ref&& ref) noexcept { block_ref tmp(std::move(ref)); swap(tmp); return *this; }
-	block_ref& operator=(const block_ref& ref) { block_ref tmp(ref); swap(tmp); return *this; }
+	block_ref() : stored(false), index(block_index_invalid) {}
 
 private:
-	ref_ptr<BlockManager> manager;
+	bool stored;
 	data_t index;
 public:
 	bool empty() const { return index == block_index_invalid; }
+	void clear() { *this = block_ref(); }
+
 private:
-	bool IsNewBlock() const { return manager == nullptr; }
+	bool IsNewBlock() const { return stored == false; }
 private:
 	bool IsNewBlockCached() const { return !empty(); }
 	void CacheNewBlock(std::shared_ptr<void> block);
 	const std::shared_ptr<void>& GetCachedNewBlock();
+	bool IsNewBlockSaved() const;
+	data_t GetFileIndex() const;
+
 private:
+	void CreateBlock();
+	void SetBlockData(data_t block_index, block_data block_data);
 	block_data GetBlockData(data_t block_index);
 private:
 	bool IsBlockCached() const;
 	void CacheBlock(std::shared_ptr<void> block);
 	const std::shared_ptr<void>& GetCachedBlock();
+	bool IsCachedBlockDirty();
 	void SetCachedBlockDirty();
+	void ResetCachedBlockDirty();
 
 private:
 	template<class T>
@@ -67,9 +73,6 @@ private:
 				return ref;
 			}
 		} else {
-			if (IsBlockCreated()) {
-
-			}
 			if (IsBlockCached()) {
 				return *pointer_cast<T>(GetCachedBlock());
 			} else {
@@ -91,17 +94,29 @@ public:
 		if (!IsNewBlock()) { SetCachedBlockDirty(); }
 		return object;
 	}
+public:
+	template<class T> void save() {
+		if (empty()) { return; }
+		if (IsNewBlock()) { CreateBlock(); }
+		if (IsCachedBlockDirty()) {
+
+
+
+		}
+	}
 };
 
 
 template<class T>
-class BlockRef : public block_ref {
+class block_ref : public block_ref<> {
 public:
-	BlockRef() {}
-	BlockRef(block_ref&& ref) : block_ref(std::move(ref)) {}
+	block_ref() {}
+	block_ref(block_ref<> ref) : block_ref<>(ref) {}
 public:
 	const T& read() const { return read<T>(); }
 	T& write() { return write<T>(); }
+public:
+	void save() { save<T>(); }
 };
 
 

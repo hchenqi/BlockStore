@@ -15,14 +15,15 @@ private:
 	Sqlite::Database db;
 	Metadata metadata;
 public:
-	Metadata& GetMetadata() { return metadata; }
+	data_t GetRootIndex() { return metadata.root_index; }
+	void SetRootIndex(data_t root_index) { metadata.root_index = root_index; MetadataUpdated(); }
 	void MetadataUpdated();
 public:
 	data_t CreateBlock();
 	void SetBlockData(data_t block_index, block_data block_data);
 	block_data GetBlockData(data_t block_index);
 public:
-	void StartGC();
+	void StartGarbageCollection();
 };
 
 

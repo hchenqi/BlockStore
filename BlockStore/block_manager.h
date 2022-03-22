@@ -5,37 +5,16 @@
 
 BEGIN_NAMESPACE(BlockStore)
 
-class FileManager;
-class BlockCache;
 
-
-class BlockManager {
-private:
-	friend class block_ref;
-
-public:
-	BlockManager(const char file[]);
-	~BlockManager();
-
-private:
-	std::unique_ptr<FileManager> file;
-private:
-	data_t CreateBlock();
-	void SetBlockData(data_t block_index, block_data block_data);
-	block_data GetBlockData(data_t block_index);
-
-private:
-	std::unique_ptr<BlockCache> cache;
-private:
-	bool IsBlockCached(data_t block_index);
-	void CacheBlock(data_t block_index, std::shared_ptr<void> block);
-	const std::shared_ptr<void>& GetCachedBlock(data_t block_index);
-	void SetCachedBlockDirty(data_t block_index);
-
-public:
-	block_ref GetRootRef();
-	void SetRootRef(data_t root_index);
+struct BlockManager {
+	static void open(const char file[]);
+	static block_ref<> get_root();
+	static void set_root(const block_ref<>& root);
+	static void clear_cache();
+	static void close();
 };
+
+static constexpr BlockManager block_manager;
 
 
 END_NAMESPACE(BlockStore)

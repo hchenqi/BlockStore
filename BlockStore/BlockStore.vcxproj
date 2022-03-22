@@ -172,7 +172,6 @@
     <ClInclude Include="uncopyable.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="block_manager.cpp" />
     <ClCompile Include="block_ref.cpp" />
     <ClCompile Include="file_manager.cpp" />
     <ClCompile Include="sqlite_helper.cpp" />

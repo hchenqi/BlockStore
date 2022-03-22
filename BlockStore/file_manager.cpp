@@ -64,7 +64,7 @@ block_data FileManager::GetBlockData(data_t block_index) {
 	return db.ExecuteForOne<block_data>(select_data_ref_OBJECT_id, block_index);
 }
 
-void FileManager::StartGC() {
+void FileManager::StartGarbageCollection() {
 	metadata.gc_phase = GcPhase::Scan;
 	while (db.ExecuteForOne<uint64>(select_count_BUFFER)) {
 		db.Execute(delete_EXPAND);
