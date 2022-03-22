@@ -33,7 +33,8 @@ private:
 	void SetCachedBlockDirty(data_t block_index);
 
 public:
-	block_ref LoadRootRef();
+	block_ref GetRootRef();
+	void SetRootRef(data_t root_index);
 };
 
 

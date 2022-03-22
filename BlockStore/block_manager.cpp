@@ -18,5 +18,9 @@ void BlockManager::CacheBlock(data_t block_index, std::shared_ptr<void> block) {
 const std::shared_ptr<void>& BlockManager::GetCachedBlock(data_t block_index) { return cache->Get(block_index); }
 void BlockManager::SetCachedBlockDirty(data_t block_index) { cache->SetDirty(block_index); }
 
+block_ref BlockManager::GetRootRef() {
+	return block_ref(*this, file->GetMetadata().root_index);
+}
+
 
 END_NAMESPACE(BlockStore)
