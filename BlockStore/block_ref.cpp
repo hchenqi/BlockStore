@@ -2,7 +2,6 @@
 #include "block_manager.h"
 #include "file_manager.h"
 #include "block_cache.h"
-#include "block_cache_new.h"
 
 
 BEGIN_NAMESPACE(BlockStore)

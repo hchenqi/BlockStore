@@ -156,7 +156,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="block_cache.h" />
-    <ClInclude Include="block_cache_new.h" />
     <ClInclude Include="block_data.h" />
     <ClInclude Include="block_manager.h" />
     <ClInclude Include="block_ref.h" />

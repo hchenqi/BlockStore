@@ -57,9 +57,6 @@
     <ClInclude Include="block_data.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="block_cache_new.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="sqlite_helper.cpp">
