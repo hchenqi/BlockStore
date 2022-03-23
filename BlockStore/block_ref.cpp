@@ -25,8 +25,7 @@ void BlockManager::close() { file.reset(); }
 
 void block_ref<>::CacheNewBlock(std::shared_ptr<void> block) { index = new_block_cache.Add(std::move(block)); }
 const std::shared_ptr<void>& block_ref<>::GetCachedNewBlock() { return new_block_cache.Get(index); }
-bool block_ref<>::IsNewBlockSaved() const { return new_block_cache.IsSaved(index); }
-data_t block_ref<>::GetFileIndex() const { return new_block_cache.GetFileIndex(index); }
+bool block_ref<>::IsNewBlockSaved() { return new_block_cache.IsSaved(index) ? *this = block_ref(new_block_cache.GetFileIndex(index)), true : false; }
 
 void block_ref<>::CreateBlock() {
 	data_t file_index = file->CreateBlock();
@@ -36,8 +35,8 @@ void block_ref<>::CreateBlock() {
 	SetCachedBlockDirty();
 }
 
-void block_ref<>::SetBlockData(data_t block_index, block_data block_data) { file->SetBlockData(block_index, block_data); }
-block_data block_ref<>::GetBlockData(data_t block_index) { return file->GetBlockData(index); }
+void block_ref<>::SetBlockData(block_data block_data) { file->SetBlockData(index, block_data); }
+block_data block_ref<>::GetBlockData() { return file->GetBlockData(index); }
 
 bool block_ref<>::IsBlockCached() const { return block_cache.Has(index); }
 void block_ref<>::CacheBlock(std::shared_ptr<void> block) { block_cache.Add(index, std::move(block)); }

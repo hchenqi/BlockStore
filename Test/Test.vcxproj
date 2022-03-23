@@ -166,7 +166,7 @@
     <ClCompile Include="test.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="block_test.h" />
+    <ClInclude Include="list_test.h" />
     <ClInclude Include="file_test.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

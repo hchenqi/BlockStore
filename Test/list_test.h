@@ -23,11 +23,15 @@ void PrintList(const block_ref<Node>& root) {
 }
 
 void AppendList(block_ref<Node>& root) {
-	block_ref<Node> next = root;
-	root.clear();
-	auto& block = root.write();
-	block.number = next.read().number + 1;
-	block.next = next;
+	if (root.empty()) {
+		root.write().number = 0;
+	} else {
+		block_ref<Node> next = root;
+		root.clear();
+		auto& block = root.write();
+		block.number = next.read().number + 1;
+		block.next = next;
+	}
 	root.save();
 }
 
@@ -37,4 +41,6 @@ int main() {
 	PrintList(root_ref);
 	AppendList(root_ref);
 	block_manager.set_root(root_ref);
+	block_manager.clear_cache();
+	block_manager.close();
 }
