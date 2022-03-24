@@ -6,7 +6,6 @@ using namespace BlockStore;
 
 int main() {
 	FileManager file("file_test.db");
-	file.GetMetadata().gc_phase = GcPhase::Sweep;
-	file.MetadataUpdated();
+	file.SetRootIndex(block_index_invalid);
 	return 0;
 }

@@ -24,9 +24,6 @@
     <ClInclude Include="core.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="block_cache.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="layout.h">
       <Filter>Header Files</Filter>
     </ClInclude>

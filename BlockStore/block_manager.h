@@ -8,9 +8,8 @@ BEGIN_NAMESPACE(BlockStore)
 
 struct BlockManager {
 	static void open(const char file[]);
-	static block_ref<> get_root();
-	static void set_root(const block_ref<>& root);
-	static void clear_cache();
+	static block_ref get_root();
+	static void set_root(const block_ref& root);
 	static void close();
 };
 

@@ -7,40 +7,36 @@ using namespace BlockStore;
 
 
 struct Node {
-	int number = 0;
-	block_ref<Node> next;
+	int number;
+	block_ref next;
 };
 
 auto layout(layout_type<Node>) { return declare(&Node::number, &Node::next); }
 
 
-void PrintList(const block_ref<Node>& root) {
-	for (block_ref<Node> node = root; !node.empty();) {
-		auto& block = node.read();
+void PrintList(const block_ref& root) {
+	for (block_ref node = root; !node.empty();) {
+		Node block; node.read(block);
 		std::cout << block.number << std::endl;
 		node = block.next;
 	}
 }
 
-void AppendList(block_ref<Node>& root) {
+void AppendList(block_ref& root) {
 	if (root.empty()) {
-		root.write().number = 0;
+		root.write(Node{ 0 });
 	} else {
-		block_ref<Node> next = root;
+		block_ref next = root;
 		root.clear();
-		auto& block = root.write();
-		block.number = next.read().number + 1;
-		block.next = next;
+		root.write(Node{ next.read<Node>().number + 1, next });
 	}
-	root.save();
 }
 
 int main() {
 	block_manager.open("block_test.db");
-	block_ref<Node> root_ref = block_manager.get_root();
-	PrintList(root_ref);
-	AppendList(root_ref);
-	block_manager.set_root(root_ref);
-	block_manager.clear_cache();
+	block_ref root = block_manager.get_root();
+	PrintList(root);
+	AppendList(root);
+	block_manager.set_root(root);
 	block_manager.close();
 }
