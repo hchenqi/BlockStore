@@ -70,10 +70,6 @@ public:
 		data_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
 		memcpy(index_curr, &index, sizeof(data_t)); index_curr = index_next;
 	}
-	void write_index(const data_t index[], data_t count) {
-		data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
-		memcpy(index_curr, index, sizeof(data_t) * count); index_curr = index_next;
-	}
 };
 
 
@@ -105,10 +101,6 @@ public:
 	void read_index(data_t& index) {
 		const data_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
 		memcpy(&index, index_curr, sizeof(data_t)); index_curr = index_next;
-	}
-	void read_index(data_t index[], data_t count) {
-		const data_t* index_next = index_curr + count; CheckIndexOffset(index_next);
-		memcpy(index, index_curr, sizeof(data_t) * count); index_curr = index_next;
 	}
 };
 

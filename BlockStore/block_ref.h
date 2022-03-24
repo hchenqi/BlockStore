@@ -130,11 +130,28 @@ public:
 };
 
 
+template<>
+struct layout_traits<block_ref<>> {
+	static void Size(BlockSizeContext& context, const block_ref<>& object) {
+		context.add_index();
+	}
+	static void Save(BlockSaveContext& context, const block_ref<>& object) {
+		if (!object.empty() && object.IsNewBlock() && !const_cast<block_ref<>&>(object).IsNewBlockSaved()) {
+			throw std::invalid_argument("block unsaved");
+		};
+		context.write_index(object.index);
+	}
+	static void Load(BlockLoadContext& context, block_ref<>& object) {
+		data_t index; context.read_index(index); object = block_ref(index);
+	}
+};
+
+
 template<class T>
-struct layout_traits<block_ref<T>> {
-	static void Size(BlockSizeContext& context, const block_ref<T>& object) { context.add_index(); }
-	static void Save(BlockSaveContext& context, const block_ref<T>& object) { const_cast<block_ref<T>&>(object).save(); context.write_index(object.index); }
-	static void Load(BlockLoadContext& context, block_ref<T>& object) { data_t index; context.read_index(index); object = block_ref(index); }
+struct layout_traits<block_ref<T>> : public layout_traits<block_ref<>> {
+	static void Save(BlockSaveContext& context, const block_ref<T>& object) {
+		const_cast<block_ref<T>&>(object).save(); context.write_index(object.index);
+	}
 };
 
 

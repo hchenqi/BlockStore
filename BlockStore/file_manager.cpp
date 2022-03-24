@@ -4,8 +4,9 @@
 
 BEGIN_NAMESPACE(BlockStore)
 
-using namespace Sqlite;
+BEGIN_NAMESPACE(Anonymous)
 
+using namespace Sqlite;
 
 constexpr size_t table_count = 4;
 
@@ -31,6 +32,8 @@ Query insert_EXPAND_id = "insert into EXPAND values (?)";  // uint64 -> void
 Query update_OBJECT_gc = "update OBJECT set gc = ? where id in (select * from BUFFER)";  // bool -> void
 Query delete_BUFFER = "delete from BUFFER";  // void -> void
 Query delete_OBJECT_gc = "delete from OBJECT where gc = ?";  // bool -> void
+
+END_NAMESPACE(Anonymous)
 
 
 FileManager::FileManager(const char file[]) : db(file) {
