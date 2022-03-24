@@ -10,7 +10,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Test", "Test\Test.vcxproj",
 		{DE76EFB0-0028-418F-92FB-B3EB573F1035} = {DE76EFB0-0028-418F-92FB-B3EB573F1035}
 	EndProjectSection
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Sqlite3", "Sqlite3\Sqlite3.vcxproj", "{B1FBDFF6-6CDA-40A1-AC21-D9BD8D504B06}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Sqlite3", "D:\source\Sqlite3\Sqlite3.vcxproj", "{B1FBDFF6-6CDA-40A1-AC21-D9BD8D504B06}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
