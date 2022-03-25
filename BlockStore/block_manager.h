@@ -10,6 +10,7 @@ struct BlockManager {
 	static void open(const char file[]);
 	static block_ref get_root();
 	static void set_root(const block_ref& root);
+	static void start_gc();
 	static void close();
 };
 

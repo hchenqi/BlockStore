@@ -17,6 +17,7 @@ END_NAMESPACE(Anonymous)
 void BlockManager::open(const char path[]) { file.reset(new FileManager(path)); }
 block_ref BlockManager::get_root() { return file->GetRootIndex(); }
 void BlockManager::set_root(const block_ref& root) { file->SetRootIndex(root.index); }
+void BlockManager::start_gc() { file->StartGarbageCollection(); }
 void BlockManager::close() { file.reset(); }
 
 

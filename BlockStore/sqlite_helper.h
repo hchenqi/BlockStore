@@ -72,19 +72,19 @@ private:
 	}
 public:
 	template<class... Ts>
-	void Execute(Query& query, Ts... para) {
+	void Execute(Query& query, const Ts&... para) {
 		PrepareQuery(query);
 		(Bind(query, para), ...);
 		ExecuteQuery(query);
 	}
 	template<class T, class... Ts>
-	T ExecuteForOne(Query& query, Ts... para) {
+	T ExecuteForOne(Query& query, const Ts&... para) {
 		PrepareQuery(query); (Bind(query, para), ...);
 		if (ExecuteQuery(query) == false) { throw std::runtime_error("sqlite error"); }
 		T result; Read(query, result); return result;
 	}
 	template<class T, class... Ts>
-	std::vector<T> ExecuteForMultiple(Query& query, Ts... para) {
+	std::vector<T> ExecuteForMultiple(Query& query, const Ts&... para) {
 		PrepareQuery(query); (Bind(query, para), ...);
 		std::vector<T> result; while (ExecuteQuery(query)) { Read(query, result.emplace_back()); } return result;
 	}

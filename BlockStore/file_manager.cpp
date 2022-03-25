@@ -22,10 +22,12 @@ Query select_data_STATIC = "select * from STATIC";  // void -> vector<byte>
 Query update_STATIC_data = "update STATIC set data = ?";  // vector<byte> -> void
 
 Query insert_id_OBJECT_gc = "insert into OBJECT (gc) values (?) returning id";  // bool -> uint64
+Query select_count_OBJECT_id_gc = "select count(*) from OBJECT where id = ? and gc = ?";  // uint64, bool -> uint64
 Query select_data_ref_OBJECT_id = "select data, ref from OBJECT where id = ?";  // uint64 -> vector<byte>, vector<data_t>
 Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // vector<byte>, vector<data_t>, uint64 -> void
 
-Query select_count_BUFFER = "insert into BUFFER (select * from EXPAND order by rowid desc limit 16) returning count(*)";  // void -> uint64
+Query insert_BUFFER = "insert into BUFFER select * from EXPAND order by rowid desc limit 16";  // void -> void
+Query select_count_BUFFER = "select count(*) from BUFFER";  // void -> uint64
 Query delete_EXPAND = "delete from EXPAND where rowid in (select rowid from EXPAND order by rowid desc limit 16)";  // void -> void
 Query select_ref_OBJECT_gc = "select ref from OBJECT where id in (select * from BUFFER) and gc = ?";  // bool -> vector<vector<data_t>>
 Query insert_EXPAND_id = "insert into EXPAND values (?)";  // uint64 -> void
@@ -61,6 +63,9 @@ data_t FileManager::CreateBlock() {
 
 void FileManager::SetBlockData(data_t block_index, block_data block_data) {
 	db.Execute(update_OBJECT_data_ref_id, block_data.first, block_data.second, block_index);
+	if (metadata.gc_phase == GcPhase::Scan && db.ExecuteForOne<data_t>(select_count_OBJECT_id_gc, block_index, !metadata.gc_mark) != 0) {
+		for (auto& id : block_data.second) { db.Execute(insert_EXPAND_id, id); }
+	}
 }
 
 block_data FileManager::GetBlockData(data_t block_index) {
@@ -68,22 +73,27 @@ block_data FileManager::GetBlockData(data_t block_index) {
 }
 
 void FileManager::StartGarbageCollection() {
-	metadata.gc_phase = GcPhase::Scan;
-	while (db.ExecuteForOne<uint64>(select_count_BUFFER)) {
+	switch (metadata.gc_phase) {
+	case GcPhase::Idle: goto idle;
+	case GcPhase::Scan: goto scan;
+	case GcPhase::Sweep: goto sweep;
+	}
+idle:
+	db.Execute(insert_EXPAND_id, metadata.root_index);
+	metadata.gc_phase = GcPhase::Scan; MetadataUpdated();
+scan:
+	while (db.Execute(insert_BUFFER), db.ExecuteForOne<uint64>(select_count_BUFFER) != 0) {
 		db.Execute(delete_EXPAND);
 		std::vector<std::vector<data_t>> data_list = db.ExecuteForMultiple<std::vector<data_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
-		for (auto& data : data_list) {
-			for (auto& child_id : data) {
-				db.Execute(insert_EXPAND_id, child_id);
-			}
-		}
+		for (auto& data : data_list) { for (auto& id : data) { db.Execute(insert_EXPAND_id, id); } }
 		db.Execute(update_OBJECT_gc, !metadata.gc_mark);
 		db.Execute(delete_BUFFER);
 	}
-	metadata.gc_phase = GcPhase::Sweep;
+	metadata.gc_phase = GcPhase::Sweep; MetadataUpdated();
+sweep:
 	db.Execute(delete_OBJECT_gc, metadata.gc_mark);
 	metadata.gc_mark = !metadata.gc_mark;
-	metadata.gc_phase = GcPhase::Idle;
+	metadata.gc_phase = GcPhase::Idle; MetadataUpdated();
 }
 
 

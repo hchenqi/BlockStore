@@ -4,8 +4,10 @@
 using namespace BlockStore;
 
 
-int main() {
-	FileManager file("file_test.db");
-	file.SetRootIndex(block_index_invalid);
+int main(int argc, char* argv[]) {
+	if (argc == 2) {
+		FileManager file(argv[1]);
+		file.StartGarbageCollection();
+	}
 	return 0;
 }
