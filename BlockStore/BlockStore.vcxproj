@@ -170,13 +170,11 @@
     <ClInclude Include="layout_traits_stl.h" />
     <ClInclude Include="metadata.h" />
     <ClInclude Include="trivial_serializer.h" />
-    <ClInclude Include="sqlite_helper.h" />
     <ClInclude Include="uncopyable.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="block_ref.cpp" />
     <ClCompile Include="file_manager.cpp" />
-    <ClCompile Include="sqlite_helper.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

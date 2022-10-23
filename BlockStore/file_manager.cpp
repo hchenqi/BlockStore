@@ -1,8 +1,18 @@
 #include "file_manager.h"
 #include "trivial_serializer.h"
 
+#include "Sqlite3/sqlite_helper.h"
+
+
+#pragma comment(lib, "Sqlite3.lib")
+
 
 BEGIN_NAMESPACE(BlockStore)
+
+class Database : public Sqlite::Database {
+public:
+	using Sqlite::Database::Database;
+};
 
 BEGIN_NAMESPACE(Anonymous)
 
@@ -38,38 +48,40 @@ Query delete_OBJECT_gc = "delete from OBJECT where gc = ?";  // bool -> void
 END_NAMESPACE(Anonymous)
 
 
-FileManager::FileManager(const char file[]) : db(file) {
-	if (db.ExecuteForOne<uint64>(select_count_TABLE) != table_count) {
-		db.Execute(create_STATIC);
-		db.Execute(create_OBJECT);
-		db.Execute(create_EXPAND);
-		db.Execute(create_BUFFER);
+FileManager::FileManager(const char file[]) : db(new Database(file)) {
+	if (db->ExecuteForOne<uint64>(select_count_TABLE) != table_count) {
+		db->Execute(create_STATIC);
+		db->Execute(create_OBJECT);
+		db->Execute(create_EXPAND);
+		db->Execute(create_BUFFER);
 		metadata.root_index = block_index_invalid;
 		metadata.gc_mark = false;
 		metadata.gc_phase = GcPhase::Idle;
-		db.Execute(insert_STATIC_data, Serialize(metadata));
+		db->Execute(insert_STATIC_data, Serialize(metadata));
 	} else {
-		metadata = Deserialize<Metadata>(db.ExecuteForOne<std::vector<byte>>(select_data_STATIC));
+		metadata = Deserialize<Metadata>(db->ExecuteForOne<std::vector<byte>>(select_data_STATIC));
 	}
 }
 
+FileManager::~FileManager() {}
+
 void FileManager::MetadataUpdated() {
-	db.Execute(update_STATIC_data, Serialize(metadata));
+	db->Execute(update_STATIC_data, Serialize(metadata));
 }
 
 data_t FileManager::CreateBlock() {
-	return db.ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
+	return db->ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
 }
 
 void FileManager::SetBlockData(data_t block_index, block_data block_data) {
-	db.Execute(update_OBJECT_data_ref_id, block_data.first, block_data.second, block_index);
-	if (metadata.gc_phase == GcPhase::Scan && db.ExecuteForOne<data_t>(select_count_OBJECT_id_gc, block_index, !metadata.gc_mark) != 0) {
-		for (auto& id : block_data.second) { db.Execute(insert_EXPAND_id, id); }
+	db->Execute(update_OBJECT_data_ref_id, block_data.first, block_data.second, block_index);
+	if (metadata.gc_phase == GcPhase::Scan && db->ExecuteForOne<data_t>(select_count_OBJECT_id_gc, block_index, !metadata.gc_mark) != 0) {
+		for (auto& id : block_data.second) { db->Execute(insert_EXPAND_id, id); }
 	}
 }
 
 block_data FileManager::GetBlockData(data_t block_index) {
-	return db.ExecuteForOne<block_data>(select_data_ref_OBJECT_id, block_index);
+	return db->ExecuteForOne<block_data>(select_data_ref_OBJECT_id, block_index);
 }
 
 void FileManager::StartGarbageCollection() {
@@ -79,19 +91,19 @@ void FileManager::StartGarbageCollection() {
 	case GcPhase::Sweep: goto sweep;
 	}
 idle:
-	db.Execute(insert_EXPAND_id, metadata.root_index);
+	db->Execute(insert_EXPAND_id, metadata.root_index);
 	metadata.gc_phase = GcPhase::Scan; MetadataUpdated();
 scan:
-	while (db.Execute(insert_BUFFER), db.ExecuteForOne<uint64>(select_count_BUFFER) != 0) {
-		db.Execute(delete_EXPAND);
-		std::vector<std::vector<data_t>> data_list = db.ExecuteForMultiple<std::vector<data_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
-		for (auto& data : data_list) { for (auto& id : data) { db.Execute(insert_EXPAND_id, id); } }
-		db.Execute(update_OBJECT_gc, !metadata.gc_mark);
-		db.Execute(delete_BUFFER);
+	while (db->Execute(insert_BUFFER), db->ExecuteForOne<uint64>(select_count_BUFFER) != 0) {
+		db->Execute(delete_EXPAND);
+		std::vector<std::vector<data_t>> data_list = db->ExecuteForMultiple<std::vector<data_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
+		for (auto& data : data_list) { for (auto& id : data) { db->Execute(insert_EXPAND_id, id); } }
+		db->Execute(update_OBJECT_gc, !metadata.gc_mark);
+		db->Execute(delete_BUFFER);
 	}
 	metadata.gc_phase = GcPhase::Sweep; MetadataUpdated();
 sweep:
-	db.Execute(delete_OBJECT_gc, metadata.gc_mark);
+	db->Execute(delete_OBJECT_gc, metadata.gc_mark);
 	metadata.gc_mark = !metadata.gc_mark;
 	metadata.gc_phase = GcPhase::Idle; MetadataUpdated();
 }

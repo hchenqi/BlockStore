@@ -1,18 +1,22 @@
 #pragma once
 
 #include "metadata.h"
-#include "sqlite_helper.h"
 #include "block_data.h"
+
+#include <memory>
 
 
 BEGIN_NAMESPACE(BlockStore)
 
 
+class Database;
+
 class FileManager {
 public:
 	FileManager(const char file[]);
+	~FileManager();
 private:
-	Sqlite::Database db;
+	std::unique_ptr<Database> db;
 	Metadata metadata;
 private:
 	void MetadataUpdated();
