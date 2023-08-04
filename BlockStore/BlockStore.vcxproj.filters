@@ -18,45 +18,15 @@
     <ClInclude Include="block_manager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="block_ref.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="core.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="layout.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="layout_context.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="layout_traits.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="layout_traits_stl.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="file_manager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="uncopyable.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="metadata.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="trivial_serializer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="block_data.h">
+    <ClInclude Include="block.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="file_manager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="block_ref.cpp">
+    <ClCompile Include="block.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

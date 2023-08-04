@@ -97,7 +97,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>..\..\Sqlite3;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\Sqlite3;..\..\CppSerialize;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -114,7 +114,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>..\..\Sqlite3;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\Sqlite3;..\..\CppSerialize;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -131,7 +131,7 @@
       <PreprocessorDefinitions>_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>..\..\Sqlite3;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\Sqlite3;..\..\CppSerialize;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -148,7 +148,7 @@
       <PreprocessorDefinitions>NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>..\..\Sqlite3;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\Sqlite3;..\..\CppSerialize;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
@@ -159,22 +159,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="block_data.h" />
+    <ClInclude Include="block.h" />
     <ClInclude Include="block_manager.h" />
-    <ClInclude Include="block_ref.h" />
     <ClInclude Include="core.h" />
-    <ClInclude Include="file_manager.h" />
-    <ClInclude Include="layout.h" />
-    <ClInclude Include="layout_context.h" />
-    <ClInclude Include="layout_traits.h" />
-    <ClInclude Include="layout_traits_stl.h" />
-    <ClInclude Include="metadata.h" />
-    <ClInclude Include="trivial_serializer.h" />
-    <ClInclude Include="uncopyable.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="block_ref.cpp" />
-    <ClCompile Include="file_manager.cpp" />
+    <ClCompile Include="block.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

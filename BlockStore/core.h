@@ -15,18 +15,9 @@
 BEGIN_NAMESPACE(BlockStore)
 
 
-template<class T> using ref_ptr = T*;
-template<class T> using alloc_ptr = T*;
-
-using byte = std::byte;
-using uchar = unsigned char;
-using ushort = unsigned short;
-using uint = unsigned int;
 using uint64 = unsigned long long;
-using wchar = wchar_t;
-
-using data_t = uint64;
-constexpr data_t block_index_invalid = -1;
+using index_t = uint64;
+constexpr index_t block_index_invalid = -1;
 
 
 END_NAMESPACE(BlockStore)
