@@ -1,34 +1,18 @@
 #pragma once
 
-#include "core.h"
-#include "CppSerialize/cpp_serialize.h"
-#include "CppSerialize/layout_traits_stl.h"
+#include "serializer.h"
 
-#include <functional>
+#include "CppSerialize/layout_traits_stl.h"
 
 
 BEGIN_NAMESPACE(BlockStore)
 
-using CppSerialize::byte;
-using CppSerialize::Serialize;
-using CppSerialize::Deserialize;
 
+template<class T = void>
+class block;
 
-struct block_ref {
-private:
-	friend class block;
-	friend class BlockManager;
-private:
-	index_t index;
-private:
-	block_ref(index_t index) : index(index) {}
-	operator index_t() const { return index; }
-public:
-	block_ref() : index(block_index_invalid) {}
-};
-
-
-class block {
+template<>
+class block<void> {
 private:
 	index_t index;
 
@@ -40,9 +24,30 @@ public:
 	bool empty() const { return index == block_index_invalid; }
 	operator block_ref() const { return index; }
 
+protected:
+	using data = std::pair<std::vector<byte>, std::vector<index_t>>;
+protected:
+	data read();
+	void write(data data);
+};
+
+template<class T>
+class block : public block<> {
 public:
-	std::pair<std::vector<byte>, std::vector<block_ref>> read();
-	void write(std::vector<byte> data, std::vector<block_ref> ref_list);
+	T read() {
+		if (empty()) { return {}; }
+		auto data = block<>::read();
+		BlockLoadContext load_context(data.first.data(), data.first.size(), data.second.data(), data.second.size());
+		T object; load_context.load(object);
+		return object;
+	}
+	void write(const T& object) {
+		BlockSizeContext size_context; size_context.add(object);
+		std::vector<byte> data(size_context.GetSize()); std::vector<index_t> ref_list(size_context.GetIndexSize());
+		BlockSaveContext save_context(data.data(), data.size(), ref_list.data(), ref_list.size());
+		save_context.save(object);
+		block<>::write(std::make_pair(std::move(data), std::move(ref_list)));
+	}
 };
 
 

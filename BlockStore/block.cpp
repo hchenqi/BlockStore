@@ -1,19 +1,13 @@
 #include "block_manager.h"
 
+#include "CppSerialize/cpp_serialize.h"
+
 #include "Sqlite3/sqlite_helper.h"
 
 #include <memory>
 
 
 #pragma comment(lib, "Sqlite3.lib")
-
-
-BEGIN_NAMESPACE(CppSerialize)
-
-template<>
-constexpr bool has_trivial_layout<BlockStore::block_ref> = true;
-
-END_NAMESPACE(CppSerialize)
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -26,7 +20,7 @@ struct Metadata {
 	GcPhase gc_phase;
 };
 
-using block_data = std::tuple<std::vector<byte>, std::vector<byte>>;
+using block_data = std::pair<std::vector<byte>, std::vector<index_t>>;
 
 BEGIN_NAMESPACE(Anonymous)
 
@@ -37,30 +31,30 @@ Metadata metadata;
 
 constexpr size_t table_count = 4;
 
-Query select_count_TABLE = "select count(*) from SQLITE_MASTER";  // void -> uint64
+Query select_count_TABLE = "select count(*) from SQLITE_MASTER";  // void -> count: uint64
 
 Query create_STATIC = "create table STATIC (data BLOB)";  // void -> void
 Query create_OBJECT = "create table OBJECT (id INTEGER primary key, gc BOOLEAN, data BLOB, ref BLOB)";  // void -> void
 Query create_EXPAND = "create table EXPAND (id INTEGER)";  // void -> void
 Query create_BUFFER = "create table BUFFER (id INTEGER)";  // void -> void
 
-Query insert_STATIC_data = "insert into STATIC values (?)";  // vector<byte> -> void
-Query select_data_STATIC = "select * from STATIC";  // void -> vector<byte>
-Query update_STATIC_data = "update STATIC set data = ?";  // vector<byte> -> void
+Query insert_STATIC_data = "insert into STATIC values (?)";  // data: vector<byte> -> void
+Query select_data_STATIC = "select * from STATIC";  // void -> data: vector<byte>
+Query update_STATIC_data = "update STATIC set data = ?";  // data: vector<byte> -> void
 
-Query insert_id_OBJECT_gc = "insert into OBJECT (gc) values (?) returning id";  // bool -> uint64
-Query select_count_OBJECT_id_gc = "select count(*) from OBJECT where id = ? and gc = ?";  // uint64, bool -> uint64
-Query select_data_ref_OBJECT_id = "select data, ref from OBJECT where id = ?";  // uint64 -> vector<byte>, vector<byte>
-Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // vector<byte>, vector<byte>, uint64 -> void
+Query insert_id_OBJECT_gc_data_ref = "insert into OBJECT (gc, data, ref) values (?, ?, ?) returning id";  // gc: bool, data: vector<byte>, ref: vector<index_t> -> id: uint64
+Query select_data_ref_OBJECT_id = "select data, ref from OBJECT where id = ?";  // id: uint64 -> data: vector<byte>, ref: vector<index_t>
+Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // data: vector<byte>, ref: vector<index_t>, id: uint64 -> void
+Query select_count_OBJECT_id_gc = "select count(*) from OBJECT where id = ? and gc = ?";  // id: uint64, gc: bool -> count: uint64
 
 Query insert_BUFFER = "insert into BUFFER select * from EXPAND order by rowid desc limit 16";  // void -> void
-Query select_count_BUFFER = "select count(*) from BUFFER";  // void -> uint64
+Query select_count_BUFFER = "select count(*) from BUFFER";  // void -> count: uint64
 Query delete_EXPAND = "delete from EXPAND where rowid in (select rowid from EXPAND order by rowid desc limit 16)";  // void -> void
-Query select_ref_OBJECT_gc = "select ref from OBJECT where id in (select * from BUFFER) and gc = ?";  // uint64 -> vector<vector<byte>>
-Query insert_EXPAND_id = "insert into EXPAND values (?)";  // uint64 -> void
-Query update_OBJECT_gc = "update OBJECT set gc = ? where id in (select * from BUFFER)";  // bool -> void
+Query select_ref_OBJECT_gc = "select ref from OBJECT where id in (select * from BUFFER) and gc = ?";  // gc: bool -> vector<ref: vector<index_t>>
+Query insert_EXPAND_id = "insert into EXPAND values (?)";  // id: uint64 -> void
+Query update_OBJECT_gc = "update OBJECT set gc = ? where id in (select * from BUFFER)";  // gc: bool -> void
 Query delete_BUFFER = "delete from BUFFER";  // void -> void
-Query delete_OBJECT_gc = "delete from OBJECT where gc = ?";  // bool -> void
+Query delete_OBJECT_gc = "delete from OBJECT where gc = ?";  // gc: bool -> void
 
 inline void UpdateMetadata() {
 	db->Execute(update_STATIC_data, Serialize(metadata));
@@ -112,8 +106,8 @@ idle:
 scan:
 	while (db->Execute(insert_BUFFER), db->ExecuteForOne<uint64>(select_count_BUFFER) != 0) {
 		db->Execute(delete_EXPAND);
-		std::vector<std::vector<byte>> data_list = db->ExecuteForMultiple<std::vector<byte>>(select_ref_OBJECT_gc, metadata.gc_mark);
-		for (auto& data : data_list) { for (index_t id : Deserialize<std::vector<block_ref>>(data)) { db->Execute(insert_EXPAND_id, id); } }
+		std::vector<std::vector<index_t>> data_list = db->ExecuteForMultiple<std::vector<index_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
+		for (auto& data : data_list) { for (index_t id : data) { db->Execute(insert_EXPAND_id, id); } }
 		db->Execute(update_OBJECT_gc, !metadata.gc_mark);
 		db->Execute(delete_BUFFER);
 	}
@@ -127,21 +121,21 @@ sweep:
 }
 
 
-std::pair<std::vector<byte>, std::vector<block_ref>> block::read() {
+block_data block<>::read() {
 	if (empty()) {
-		return {};
+		throw std::runtime_error("cannot read empty block");
 	}
-	block_data data = db->ExecuteForOne<block_data>(select_data_ref_OBJECT_id, index);
-	return { std::get<0>(data), Deserialize<std::vector<block_ref>>(std::get<1>(data)) };
+	return db->ExecuteForOne<block_data>(select_data_ref_OBJECT_id, index);
 }
 
-void block::write(std::vector<byte> data, std::vector<block_ref> ref_list) {
+void block<>::write(block_data data) {
 	if (empty()) {
-		index = db->ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
+		index = db->ExecuteForOne<uint64>(insert_id_OBJECT_gc_data_ref, metadata.gc_mark, data);
+	} else {
+		db->Execute(update_OBJECT_data_ref_id, data, index);
 	}
-	db->Execute(update_OBJECT_data_ref_id, data, Serialize(ref_list), index);
 	if (metadata.gc_phase == GcPhase::Scan && db->ExecuteForOne<uint64>(select_count_OBJECT_id_gc, index, !metadata.gc_mark) != 0) {
-		for (index_t id : ref_list) { db->Execute(insert_EXPAND_id, id); }
+		for (index_t id : data.second) { db->Execute(insert_EXPAND_id, id); }
 	}
 }
 
