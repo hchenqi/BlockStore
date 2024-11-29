@@ -25,28 +25,28 @@ public:
 	operator block_ref() const { return index; }
 
 protected:
-	using data = std::pair<std::vector<byte>, std::vector<index_t>>;
-protected:
-	data read();
-	void write(data data);
+	std::vector<byte> read();
+	void write(std::vector<byte> data, std::vector<index_t> ref);
 };
 
 template<class T>
 class block : public block<> {
 public:
 	T read() {
-		if (empty()) { return {}; }
-		auto data = block<>::read();
-		BlockLoadContext load_context(data.first.data(), data.first.size(), data.second.data(), data.second.size());
-		T object; load_context.load(object);
+		T object;
+		if (!empty()) {
+			auto data = block<>::read();
+			BlockLoadContext load_context(data.data(), data.size());
+			load_context.load(object);
+		}
 		return object;
 	}
 	void write(const T& object) {
 		BlockSizeContext size_context; size_context.add(object);
-		std::vector<byte> data(size_context.GetSize()); std::vector<index_t> ref_list(size_context.GetIndexSize());
-		BlockSaveContext save_context(data.data(), data.size(), ref_list.data(), ref_list.size());
+		std::vector<byte> data(size_context.GetSize()); std::vector<index_t> ref(size_context.GetIndexSize());
+		BlockSaveContext save_context(data.data(), data.size(), ref.data(), ref.size());
 		save_context.save(object);
-		block<>::write(std::make_pair(std::move(data), std::move(ref_list)));
+		block<>::write(std::move(data), std::move(ref));
 	}
 };
 

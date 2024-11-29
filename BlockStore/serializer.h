@@ -5,6 +5,19 @@
 #include "CppSerialize/context.h"
 
 
+BEGIN_NAMESPACE(CppSerialize)
+
+using namespace BlockStore;
+
+
+static_assert(sizeof(block_ref) == sizeof(index_t));
+
+template<>
+constexpr bool has_trivial_layout<block_ref> = true;
+
+END_NAMESPACE(CppSerialize)
+
+
 BEGIN_NAMESPACE(BlockStore)
 
 using namespace CppSerialize;
@@ -32,7 +45,15 @@ public:
 	}
 	template<>
 	void add(const block_ref&) {
+		align_offset<index_t>(size);
+		size += sizeof(index_t);
 		index_size++;
+	}
+	template<>
+	void add(const block_ref[], size_t count) {
+		align_offset<index_t>(size);
+		size += sizeof(index_t) * count;
+		index_size += count;
 	}
 public:
 	size_t GetIndexSize() const { return index_size; }
@@ -66,43 +87,22 @@ public:
 	}
 	template<>
 	void save(const block_ref& index) {
+		align_offset<index_t>(curr); byte* next = curr + sizeof(index_t); CheckOffset(next);
+		memcpy(curr, &index, sizeof(index_t)); curr = next;
 		index_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
 		memcpy(index_curr, &index, sizeof(index_t)); index_curr = index_next;
 	}
-};
-
-
-struct BlockLoadContext : public LoadContext {
-private:
-	const index_t* index_curr;
-	const index_t* index_end;
-public:
-	BlockLoadContext(const byte* begin, size_t length, const index_t* index_begin, size_t index_length) :
-		LoadContext(begin, length), index_curr(index_begin), index_end(index_begin + index_length) {
-	}
-private:
-	void CheckIndexOffset(const index_t* offset) { if (offset > index_end) { throw std::runtime_error("block load error"); } }
-public:
-	template<class T> requires has_trivial_layout<T>
-	void load(T& object) {
-		align_offset<T>(curr); const byte* next = curr + sizeof(T); CheckOffset(next);
-		memcpy(&object, curr, sizeof(T)); curr = next;
-	}
-	template<class T> requires has_trivial_layout<T>
-	void load(T object[], size_t count) {
-		align_offset<T>(curr); const byte* next = curr + sizeof(T) * count; CheckOffset(next);
-		memcpy(object, curr, sizeof(T) * count); curr = next;
-	}
-	template<class T>
-	void load(T& obj) {
-		Write([&](auto&& ...args) { load(std::forward<decltype(args)>(args)...); }, obj);
-	}
 	template<>
-	void load(block_ref& index) {
-		const index_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
-		memcpy(&index, index_curr, sizeof(index_t)); index_curr = index_next;
+	void save(const block_ref index[], size_t count) {
+		align_offset<index_t>(curr); byte* next = curr + sizeof(index_t) * count; CheckOffset(next);
+		memcpy(curr, index, sizeof(index_t) * count); curr = next;
+		index_t* index_next = index_curr + count; CheckIndexOffset(index_next);
+		memcpy(index_curr, index, sizeof(index_t) * count); index_curr = index_next;
 	}
 };
+
+
+using BlockLoadContext = LoadContext;
 
 
 END_NAMESPACE(BlockStore)

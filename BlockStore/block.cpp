@@ -15,12 +15,14 @@ BEGIN_NAMESPACE(BlockStore)
 enum GcPhase { Idle, Scan, Sweep };
 
 struct Metadata {
+	uint64 version;
 	index_t root_index;
 	bool gc_mark;
 	GcPhase gc_phase;
 };
 
-using block_data = std::pair<std::vector<byte>, std::vector<index_t>>;
+constexpr uint64 metadata_version = 2024'11'29'00;
+
 
 BEGIN_NAMESPACE(Anonymous)
 
@@ -43,7 +45,7 @@ Query select_data_STATIC = "select * from STATIC";  // void -> data: vector<byte
 Query update_STATIC_data = "update STATIC set data = ?";  // data: vector<byte> -> void
 
 Query insert_id_OBJECT_gc_data_ref = "insert into OBJECT (gc, data, ref) values (?, ?, ?) returning id";  // gc: bool, data: vector<byte>, ref: vector<index_t> -> id: uint64
-Query select_data_ref_OBJECT_id = "select data, ref from OBJECT where id = ?";  // id: uint64 -> data: vector<byte>, ref: vector<index_t>
+Query select_data_OBJECT_id = "select data from OBJECT where id = ?";  // id: uint64 -> data: vector<byte>
 Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // data: vector<byte>, ref: vector<index_t>, id: uint64 -> void
 Query select_count_OBJECT_id_gc = "select count(*) from OBJECT where id = ? and gc = ?";  // id: uint64, gc: bool -> count: uint64
 
@@ -71,12 +73,16 @@ void BlockManager::open_file(const char file[]) {
 		db->Execute(create_OBJECT);
 		db->Execute(create_EXPAND);
 		db->Execute(create_BUFFER);
+		metadata.version = metadata_version;
 		metadata.root_index = block_index_invalid;
 		metadata.gc_mark = false;
 		metadata.gc_phase = GcPhase::Idle;
 		db->Execute(insert_STATIC_data, Serialize(metadata));
 	} else {
 		metadata = Deserialize<Metadata>(db->ExecuteForOne<std::vector<byte>>(select_data_STATIC));
+		if (metadata.version != metadata_version) {
+			throw std::runtime_error("metadata version doesn't match");
+		}
 	}
 }
 
@@ -121,21 +127,21 @@ sweep:
 }
 
 
-block_data block<>::read() {
+std::vector<byte> block<>::read() {
 	if (empty()) {
 		throw std::runtime_error("cannot read empty block");
 	}
-	return db->ExecuteForOne<block_data>(select_data_ref_OBJECT_id, index);
+	return db->ExecuteForOne<std::vector<byte>>(select_data_OBJECT_id, index);
 }
 
-void block<>::write(block_data data) {
+void block<>::write(std::vector<byte> data, std::vector<index_t> ref) {
 	if (empty()) {
-		index = db->ExecuteForOne<uint64>(insert_id_OBJECT_gc_data_ref, metadata.gc_mark, data);
+		index = db->ExecuteForOne<uint64>(insert_id_OBJECT_gc_data_ref, metadata.gc_mark, data, ref);
 	} else {
-		db->Execute(update_OBJECT_data_ref_id, data, index);
+		db->Execute(update_OBJECT_data_ref_id, data, ref, index);
 	}
 	if (metadata.gc_phase == GcPhase::Scan && db->ExecuteForOne<uint64>(select_count_OBJECT_id_gc, index, !metadata.gc_mark) != 0) {
-		for (index_t id : data.second) { db->Execute(insert_EXPAND_id, id); }
+		for (index_t id : ref) { db->Execute(insert_EXPAND_id, id); }
 	}
 }
 

@@ -19,7 +19,5 @@ public:
 	block_ref() : index(block_index_invalid) {}
 };
 
-static_assert(sizeof(block_ref) == sizeof(index_t));
-
 
 END_NAMESPACE(BlockStore)
