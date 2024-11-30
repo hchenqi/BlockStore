@@ -1,13 +1,12 @@
-#include "BlockStore/file_manager.h"
+#include "BlockStore/block_manager.h"
 
 
 using namespace BlockStore;
 
 
-int main(int argc, char* argv[]) {
-	if (argc == 2) {
-		FileManager file(argv[1]);
-		file.StartGarbageCollection();
-	}
+int main() {
+	block_manager.open_file("block_test.db");
+	block_manager.set_root({});
+	block_manager.collect_garbage();
 	return 0;
 }
