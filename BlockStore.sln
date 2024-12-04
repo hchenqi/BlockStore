@@ -4,6 +4,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 VisualStudioVersion = 17.1.32210.238
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BlockStore", "BlockStore\BlockStore.vcxproj", "{DE76EFB0-0028-418F-92FB-B3EB573F1035}"
+	ProjectSection(ProjectDependencies) = postProject
+		{B1FBDFF6-6CDA-40A1-AC21-D9BD8D504B06} = {B1FBDFF6-6CDA-40A1-AC21-D9BD8D504B06}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Test", "Test\Test.vcxproj", "{6B2927C9-FB50-48E4-9DA9-02A594CB79B8}"
 	ProjectSection(ProjectDependencies) = postProject
