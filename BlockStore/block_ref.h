@@ -2,6 +2,8 @@
 
 #include "core.h"
 
+#include <vector>
+
 
 BEGIN_NAMESPACE(BlockStore)
 
@@ -13,11 +15,20 @@ private:
 private:
 	index_t index;
 private:
+	block_ref();
 	block_ref(index_t index) : index(index) {}
-	operator index_t() const { return index; }
 public:
-	block_ref() : index(block_index_invalid) {}
+	operator index_t() const { return index; }
+protected:
+	void deserialize_begin();
+	void deserialize_end();
+protected:
+	std::vector<std::byte> read();
+	void write(std::vector<std::byte> data, std::vector<index_t> ref);
 };
+
+template<class T>
+constexpr bool is_block_ref = std::is_base_of_v<block_ref, T>;
 
 
 END_NAMESPACE(BlockStore)

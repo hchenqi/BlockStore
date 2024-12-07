@@ -15,6 +15,7 @@ static_assert(sizeof(block_ref) == sizeof(index_t));
 template<>
 constexpr bool has_trivial_layout<block_ref> = true;
 
+
 END_NAMESPACE(CppSerialize)
 
 
@@ -29,27 +30,25 @@ private:
 public:
 	BlockSizeContext() : SizeContext(), index_size(0) {}
 public:
-	template<class T> requires has_trivial_layout<T>
+	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
 	void add(const T&) {
 		align_offset<T>(size);
 		size += sizeof(T);
 	}
-	template<class T> requires has_trivial_layout<T>
+	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
 	void add(const T[], size_t count) {
 		align_offset<T>(size);
 		size += sizeof(T) * count;
 	}
-	template<class T>
+	template<class T> requires (!has_trivial_layout<T> && !is_block_ref<T>)
 	void add(const T& obj) {
 		Read([&](auto&& ...args) { add(std::forward<decltype(args)>(args)...); }, obj);
 	}
-	template<>
 	void add(const block_ref&) {
 		align_offset<index_t>(size);
 		size += sizeof(index_t);
 		index_size++;
 	}
-	template<>
 	void add(const block_ref[], size_t count) {
 		align_offset<index_t>(size);
 		size += sizeof(index_t) * count;
@@ -71,28 +70,26 @@ public:
 private:
 	void CheckIndexOffset(const index_t* offset) { if (offset > index_end) { throw std::runtime_error("block save error"); } }
 public:
-	template<class T> requires has_trivial_layout<T>
+	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
 	void save(const T& object) {
 		align_offset<T>(curr); byte* next = curr + sizeof(T); CheckOffset(next);
 		memcpy(curr, &object, sizeof(T)); curr = next;
 	}
-	template<class T> requires has_trivial_layout<T>
+	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
 	void save(const T object[], size_t count) {
 		align_offset<T>(curr); byte* next = curr + sizeof(T) * count; CheckOffset(next);
 		memcpy(curr, object, sizeof(T) * count); curr = next;
 	}
-	template<class T>
+	template<class T> requires (!has_trivial_layout<T> && !is_block_ref<T>)
 	void save(const T& obj) {
 		Read([&](auto&& ...args) { save(std::forward<decltype(args)>(args)...); }, obj);
 	}
-	template<>
 	void save(const block_ref& index) {
 		align_offset<index_t>(curr); byte* next = curr + sizeof(index_t); CheckOffset(next);
 		memcpy(curr, &index, sizeof(index_t)); curr = next;
 		index_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
 		memcpy(index_curr, &index, sizeof(index_t)); index_curr = index_next;
 	}
-	template<>
 	void save(const block_ref index[], size_t count) {
 		align_offset<index_t>(curr); byte* next = curr + sizeof(index_t) * count; CheckOffset(next);
 		memcpy(curr, index, sizeof(index_t) * count); curr = next;

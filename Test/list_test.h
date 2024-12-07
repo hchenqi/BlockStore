@@ -7,38 +7,31 @@ using namespace BlockStore;
 
 
 struct Node {
-	int number;
-	block_ref next;
+	int number = 0;
+	std::optional<block<Node>> next = std::nullopt;
 };
 
 auto layout(layout_type<Node>) { return declare(&Node::number, &Node::next); }
 
 
-void PrintList(const block_ref& root) {
-	for (block<Node> node(root); !node.empty();) {
-		Node data = node.read();
+void PrintList(block<std::optional<block<Node>>> root) {
+	for (auto current = root.read(); current != std::nullopt;) {
+		auto data = current.value().read();
 		std::cout << data.number << std::endl;
-		node = block<Node>(data.next);
+		current = data.next;
 	}
 }
 
-void AppendList(block_ref& root) {
-	block<Node> node(root);
-	if (node.empty()) {
-		node.write(Node{ 0 });
-		root = node;
-	} else {
-		block<Node> next;
-		next.write(Node{ node.read().number + 1, node });
-		root = next;
-	}
+void AppendList(block<std::optional<block<Node>>> root) {
+	auto data = root.read();
+	block<Node> next;
+	next.write(data == std::nullopt ? Node{} : Node{ data.value().read().number + 1, data.value() });
+	root.write(next);
 }
 
 int main() {
 	block_manager.open_file("block_test.db");
-	block_ref root = block_manager.get_root();
+	block<std::optional<block<Node>>> root = block_manager.get_root();
 	PrintList(root);
 	AppendList(root);
-	block_manager.set_root(root);
-	block_manager.close_file();
 }
