@@ -1,18 +1,15 @@
 #include "block_manager.h"
 #include "CppSerialize/cpp_serialize.h"
-#include "Sqlite3/sqlite_helper.h"
+#include "SQLite3Helper/sqlite3_helper.h"
 
 #include <memory>
 #include <unordered_set>
 #include <vector>
 
 
-#pragma comment(lib, "Sqlite3.lib")
-
-
 BEGIN_NAMESPACE(Anonymous)
 
-using namespace SqliteHelper;
+using namespace SQLite3Helper;
 using namespace CppSerialize;
 
 
