@@ -32,6 +32,11 @@ void AppendList(block<std::optional<block<Node>>> root) {
 int main() {
 	block_manager.open_file("block_test.db");
 	block<std::optional<block<Node>>> root = block_manager.get_root();
+	block_manager.transaction([&]() {
+		for (int i = 0; i < 1000; ++i) {
+			AppendList(root);
+		}
+	});
 	PrintList(root);
-	AppendList(root);
+	return 0;
 }

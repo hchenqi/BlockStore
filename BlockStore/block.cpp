@@ -15,7 +15,7 @@ using namespace CppSerialize;
 
 class DB : public Database {
 private:
-	constexpr static uint64 schema_version = 2024'12'05'00;
+	constexpr static uint64 schema_version = 2025'09'23'1;
 
 	enum GcPhase : unsigned char { Idle, Scanning, Sweeping };
 
@@ -26,11 +26,16 @@ private:
 		bool gc_mark;
 		GcPhase gc_phase;
 		uint64 block_count_last_gc;
+		uint64 block_count;
+		uint64 block_count_marked;
 		index_t max_index;
 		index_t gc_delete_index;
 	};
 
 	constexpr static uint64 table_count = 4;
+	constexpr static uint64 allocation_batch_size = 16;
+	constexpr static uint64 gc_scan_step_depth = 64;
+	constexpr static uint64 gc_scan_step_limit = 16 * 1024;
 	constexpr static uint64 gc_buffer_batch_size = 256;
 	constexpr static uint64 gc_delete_batch_size = 256 * 1024;
 
@@ -63,24 +68,26 @@ private:
 
 	Query select_count_OBJECT = "select count(*) from OBJECT";  // void -> count: uint64
 	Query select_max_OBJECT = "select max(id) from OBJECT";  // void -> id: index_t
-	Query select_next_OBJECT_begin_limit = "select max(id) from OBJECT where id > ? order by id asc limit ?";  // begin: index_t, limit: uint64 -> next: index_t
-	Query delete_OBJECT_begin_gc_limit = "delete from OBJECT where id in (select id from OBJECT where id > ? and gc = ? order by id asc limit ?)";  // begin: index_t, gc: bool, limit: uint64 -> void
+	Query select_next_OBJECT_begin_limit = "select max(id) from OBJECT where id >= ? order by id asc limit ?";  // begin: index_t, limit: uint64 -> next: index_t
+	Query delete_OBJECT_begin_end_gc = "delete from OBJECT where id in (select id from OBJECT where id >= ? and id < ? and gc = ?)";  // begin: index_t, end: index_t, gc: bool -> void
 
 public:
-	DB(const char file[]) : Database(file) {
+	DB(const char file[]) : Database(file), metadata() {
 		if (ExecuteForOne<uint64>(select_count_TABLE) != table_count) {
-			Execute(create_STATIC);
-			Execute(create_OBJECT);
-			Execute(create_EXPAND);
-			Execute(create_BUFFER);
+			Transaction([&]() {
+				Execute(create_STATIC);
+				Execute(create_OBJECT);
+				Execute(create_EXPAND);
+				Execute(create_BUFFER);
 
-			metadata.version = schema_version;
-			metadata.gc_mark = false;
-			metadata.gc_phase = GcPhase::Idle;
-			metadata.block_count_last_gc = 0;
-			metadata.root_index = allocate_index();
-			metadata.root_initialized = false;
-			Execute(insert_STATIC_data, Serialize(metadata));
+				metadata.version = schema_version;
+				metadata.gc_mark = false;
+				metadata.gc_phase = GcPhase::Idle;
+				metadata.block_count_last_gc = 0;
+				metadata.root_index = ExecuteInsertOne();
+				metadata.root_initialized = false;
+				Execute(insert_STATIC_data, Serialize(metadata));
+			});
 		} else {
 			metadata = Deserialize<Metadata>(ExecuteForOne<std::vector<byte>>(select_data_STATIC));
 			if (metadata.version != schema_version) {
@@ -92,24 +99,32 @@ public:
 		}
 	}
 	~DB() {
-		if (!metadata.root_initialized) {
-			if (!new_index_set.contains(metadata.root_index)) {
-				metadata.root_initialized = true;
-				UpdateMetadata();
-			} else {
-				new_index_set.erase(metadata.root_index);
+		Transaction([&]() {
+			if (!metadata.root_initialized) {
+				if (!new_index_set.contains(metadata.root_index)) {
+					metadata.root_initialized = true;
+					ExecuteUpdateMetadata();
+				} else {
+					new_index_set.erase(metadata.root_index);
+				}
 			}
-		}
-		for (index_t index : new_index_set) {
-			Execute(delete_OBJECT_id, index);
-		}
+			for (index_t index : new_index_set) {
+				Execute(delete_OBJECT_id, index);
+			}
+			for (index_t index : allocation_list) {
+				Execute(delete_OBJECT_id, index);
+			}
+		});
 	}
 
 private:
 	Metadata metadata;
 private:
-	void UpdateMetadata() {
+	void ExecuteUpdateMetadata() {
 		Execute(update_STATIC_data, Serialize(metadata));
+	}
+	index_t ExecuteInsertOne() {
+		return ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
 	}
 public:
 	index_t get_root() {
@@ -117,14 +132,32 @@ public:
 	}
 
 private:
+	std::vector<index_t> allocation_list;
 	std::unordered_set<index_t> new_index_set;
 public:
 	index_t allocate_index() {
-		index_t index = ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
+		if (allocation_list.empty()) {
+			try {
+				allocation_list.reserve(allocation_batch_size);
+				Transaction([&]() {
+					while (allocation_list.size() < allocation_batch_size) {
+						allocation_list.emplace_back(ExecuteInsertOne());
+					}
+				});
+			} catch (...) {
+				allocation_list.clear();
+				throw;
+			}
+		}
+		index_t index = allocation_list.back(); allocation_list.pop_back();
 		new_index_set.emplace(index);
 		return index;
 	}
 
+public:
+	void transaction(std::function<void()> op) {
+		Transaction(std::move(op));
+	}
 public:
 	std::vector<byte> read(index_t index) {
 		if (new_index_set.contains(index)) {
@@ -135,16 +168,18 @@ public:
 	}
 	void write(index_t index, std::vector<byte> data, std::vector<index_t> ref) {
 		new_index_set.erase(index);
-		if (metadata.gc_phase != GcPhase::Scanning) {
-			Execute(update_OBJECT_data_ref_id, data, ref, index);
-		} else {
-			bool gc = (bool)ExecuteForOne<uint64>(update_gc_OBJECT_data_ref_id, data, ref, index);
-			if (gc == !metadata.gc_mark) {
-				for (index_t id : ref) {
-					Execute(insert_EXPAND_id, id);
+		Transaction([&]() {
+			if (metadata.gc_phase != GcPhase::Scanning) {
+				Execute(update_OBJECT_data_ref_id, data, ref, index);
+			} else {
+				bool gc = (bool)ExecuteForOne<uint64>(update_gc_OBJECT_data_ref_id, data, ref, index);
+				if (gc == !metadata.gc_mark) {
+					for (index_t id : ref) {
+						Execute(insert_EXPAND_id, id);
+					}
 				}
 			}
-		}
+		});
 	}
 
 public:
@@ -155,36 +190,61 @@ public:
 		case GcPhase::Sweeping: goto sweeping;
 		}
 	idle:
-		Execute(insert_EXPAND_id, metadata.root_index);
-		metadata.gc_phase = GcPhase::Scanning;
-		UpdateMetadata();
+		Transaction([&]() {
+			Execute(insert_EXPAND_id, metadata.root_index);
+			metadata.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
+			metadata.block_count_marked = 0;
+			metadata.gc_phase = GcPhase::Scanning;
+			ExecuteUpdateMetadata();
+		});
+
 	scanning:
-		while (Execute(insert_BUFFER_limit, gc_buffer_batch_size), ExecuteForOne<uint64>(select_count_BUFFER) != 0) {
-			Execute(delete_EXPAND_limit, gc_buffer_batch_size);
-			std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
-			for (auto& data : data_list) { for (index_t id : data) { Execute(insert_EXPAND_id, id); } }
-			Execute(update_OBJECT_gc, !metadata.gc_mark);
-			Execute(delete_BUFFER);
+		for (;;) {
+			bool finish = false;
+			Transaction([&]() {
+				uint64 changes = 0;
+				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_step_limit; ++i) {
+					Execute(insert_BUFFER_limit, gc_buffer_batch_size);
+					if (ExecuteForOne<uint64>(select_count_BUFFER) == 0) {
+						finish = true;
+						metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
+						metadata.gc_delete_index = 0;
+						metadata.gc_phase = GcPhase::Sweeping;
+						ExecuteUpdateMetadata();
+						return;
+					}
+					Execute(delete_EXPAND_limit, gc_buffer_batch_size);
+					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
+					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_EXPAND_id, id); } }
+					Execute(update_OBJECT_gc, !metadata.gc_mark);
+					changes += Changes();
+					Execute(delete_BUFFER);
+				}
+				metadata.block_count_marked += changes;
+			});
+			if (finish) { break; }
 
 			// interrupt
 		}
-		metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
-		metadata.gc_delete_index = 0;
-		metadata.gc_phase = GcPhase::Sweeping;
-		UpdateMetadata();
 	sweeping:
-		while (metadata.gc_delete_index <= metadata.max_index) {
-			index_t next = ExecuteForOne<index_t>(select_next_OBJECT_begin_limit, metadata.gc_delete_index, gc_delete_batch_size) + 1;
-			Execute(delete_OBJECT_begin_gc_limit, metadata.gc_delete_index, metadata.gc_mark, gc_delete_batch_size);
-			metadata.gc_delete_index = next;
-			UpdateMetadata();
+		for (;;) {
+			bool finish = false;
+			Transaction([&]() {
+				index_t next = ExecuteForOne<index_t>(select_next_OBJECT_begin_limit, metadata.gc_delete_index, gc_delete_batch_size) + 1;
+				Execute(delete_OBJECT_begin_end_gc, metadata.gc_delete_index, next, metadata.gc_mark);
+				metadata.gc_delete_index = next;
+				if (metadata.gc_delete_index > metadata.max_index) {
+					finish = true;
+					metadata.gc_mark = !metadata.gc_mark;
+					metadata.gc_phase = GcPhase::Idle;
+					metadata.block_count_last_gc = ExecuteForOne<uint64>(select_count_OBJECT);
+				}
+				ExecuteUpdateMetadata();
+			});
+			if (finish) { break; }
 
 			// interrupt
 		}
-		metadata.gc_mark = !metadata.gc_mark;
-		metadata.gc_phase = GcPhase::Idle;
-		metadata.block_count_last_gc = ExecuteForOne<uint64>(select_count_OBJECT);
-		UpdateMetadata();
 	}
 };
 
@@ -213,6 +273,8 @@ void BlockManager::open_file(const char file[]) {
 }
 
 block_ref BlockManager::get_root() { return db().get_root(); }
+
+void BlockManager::transaction(std::function<void(void)> op) { return db().transaction(std::move(op)); }
 
 void BlockManager::collect_garbage() { return db().collect_garbage(); }
 
