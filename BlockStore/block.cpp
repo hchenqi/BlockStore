@@ -15,7 +15,7 @@ using namespace CppSerialize;
 
 class DB : public Database {
 private:
-	constexpr static uint64 schema_version = 2025'09'23'1;
+	constexpr static uint64 schema_version = 2025'09'25'0;
 
 	enum GcPhase : unsigned char { Idle, Scanning, Sweeping };
 
@@ -32,11 +32,11 @@ private:
 		index_t gc_delete_index;
 	};
 
-	constexpr static uint64 table_count = 4;
+	constexpr static uint64 table_count = 3;
 	constexpr static uint64 allocation_batch_size = 16;
 	constexpr static uint64 gc_scan_step_depth = 64;
-	constexpr static uint64 gc_scan_step_limit = 16 * 1024;
-	constexpr static uint64 gc_buffer_batch_size = 256;
+	constexpr static uint64 gc_scan_changes_limit = 16 * 1024;
+	constexpr static uint64 gc_scan_batch_size = 256;
 	constexpr static uint64 gc_delete_batch_size = 256 * 1024;
 
 private:
@@ -44,8 +44,7 @@ private:
 
 	Query create_STATIC = "create table STATIC (data BLOB)";  // void -> void
 	Query create_OBJECT = "create table OBJECT (id INTEGER primary key, gc BOOLEAN, data BLOB, ref BLOB)";  // void -> void
-	Query create_EXPAND = "create table EXPAND (id INTEGER)";  // void -> void
-	Query create_BUFFER = "create table BUFFER (id INTEGER)";  // void -> void
+	Query create_SCAN = "create table SCAN (id INTEGER)";  // void -> void
 
 	Query insert_STATIC_data = "insert into STATIC values (?)";  // data: vector<byte> -> void
 	Query select_data_STATIC = "select * from STATIC";  // void -> data: vector<byte>
@@ -58,13 +57,10 @@ private:
 	Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // data: vector<byte>, ref: vector<index_t>, id: index_t -> void
 	Query update_gc_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ? returning gc";  // data: vector<byte>, ref: vector<index_t>, id: index_t -> gc: bool
 
-	Query insert_BUFFER_limit = "insert into BUFFER select * from EXPAND order by rowid desc limit ?";  // limit: uint64 -> void
-	Query select_count_BUFFER = "select count(*) from BUFFER";  // void -> count: uint64
-	Query delete_EXPAND_limit = "delete from EXPAND where rowid in (select rowid from EXPAND order by rowid desc limit ?)";  // limit: uint64 -> void
-	Query select_ref_OBJECT_gc = "select ref from OBJECT where id in (select * from BUFFER) and gc = ?";  // gc: bool -> vector<ref: vector<index_t>>
-	Query insert_EXPAND_id = "insert into EXPAND values (?)";  // id: index_t -> void
-	Query update_OBJECT_gc = "update OBJECT set gc = ? where id in (select * from BUFFER)";  // gc: bool -> void
-	Query delete_BUFFER = "delete from BUFFER";  // void -> void
+	Query select_count_SCAN = "select count(*) from SCAN";  // void -> count: uint64
+	Query update_ref_OBJECT_gc = "update OBJECT set gc = ? where id in (select id from SCAN order by rowid desc limit ?) and gc = ? returning ref";  // gc: bool, limit: uint64, gc: bool -> vector<ref: vector<index_t>>
+	Query delete_SCAN_limit = "delete from SCAN where rowid in (select rowid from SCAN order by rowid desc limit ?)";  // limit: uint64 -> void
+	Query insert_SCAN_id = "insert into SCAN values (?)";  // id: index_t -> void
 
 	Query select_count_OBJECT = "select count(*) from OBJECT";  // void -> count: uint64
 	Query select_max_OBJECT = "select max(id) from OBJECT";  // void -> id: index_t
@@ -77,8 +73,7 @@ public:
 			Transaction([&]() {
 				Execute(create_STATIC);
 				Execute(create_OBJECT);
-				Execute(create_EXPAND);
-				Execute(create_BUFFER);
+				Execute(create_SCAN);
 
 				metadata.version = schema_version;
 				metadata.gc_mark = false;
@@ -175,7 +170,7 @@ public:
 				bool gc = (bool)ExecuteForOne<uint64>(update_gc_OBJECT_data_ref_id, data, ref, index);
 				if (gc == !metadata.gc_mark) {
 					for (index_t id : ref) {
-						Execute(insert_EXPAND_id, id);
+						Execute(insert_SCAN_id, id);
 					}
 				}
 			}
@@ -189,9 +184,10 @@ public:
 		case GcPhase::Scanning: goto scanning;
 		case GcPhase::Sweeping: goto sweeping;
 		}
+
 	idle:
 		Transaction([&]() {
-			Execute(insert_EXPAND_id, metadata.root_index);
+			Execute(insert_SCAN_id, metadata.root_index);
 			metadata.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
 			metadata.block_count_marked = 0;
 			metadata.gc_phase = GcPhase::Scanning;
@@ -203,9 +199,8 @@ public:
 			bool finish = false;
 			Transaction([&]() {
 				uint64 changes = 0;
-				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_step_limit; ++i) {
-					Execute(insert_BUFFER_limit, gc_buffer_batch_size);
-					if (ExecuteForOne<uint64>(select_count_BUFFER) == 0) {
+				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_changes_limit; ++i) {
+					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) {
 						finish = true;
 						metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
 						metadata.gc_delete_index = 0;
@@ -213,12 +208,10 @@ public:
 						ExecuteUpdateMetadata();
 						return;
 					}
-					Execute(delete_EXPAND_limit, gc_buffer_batch_size);
-					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(select_ref_OBJECT_gc, metadata.gc_mark);
-					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_EXPAND_id, id); } }
-					Execute(update_OBJECT_gc, !metadata.gc_mark);
+					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(update_ref_OBJECT_gc, !metadata.gc_mark, gc_scan_batch_size, metadata.gc_mark);
 					changes += Changes();
-					Execute(delete_BUFFER);
+					Execute(delete_SCAN_limit, gc_scan_batch_size);
+					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_SCAN_id, id); } }
 				}
 				metadata.block_count_marked += changes;
 			});
@@ -226,6 +219,7 @@ public:
 
 			// interrupt
 		}
+
 	sweeping:
 		for (;;) {
 			bool finish = false;
