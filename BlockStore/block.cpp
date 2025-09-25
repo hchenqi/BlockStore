@@ -15,14 +15,13 @@ using namespace CppSerialize;
 
 class DB : public Database {
 private:
-	constexpr static uint64 schema_version = 2025'09'25'0;
+	constexpr static uint64 schema_version = 2025'09'25'1;
 
 	enum GcPhase : unsigned char { Idle, Scanning, Sweeping };
 
 	struct Metadata {
 		uint64 version;
 		index_t root_index;
-		bool root_initialized;
 		bool gc_mark;
 		GcPhase gc_phase;
 		uint64 block_count_last_gc;
@@ -33,13 +32,7 @@ private:
 	};
 
 	constexpr static uint64 table_count = 3;
-	constexpr static uint64 allocation_batch_size = 16;
-	constexpr static uint64 gc_scan_step_depth = 64;
-	constexpr static uint64 gc_scan_changes_limit = 16 * 1024;
-	constexpr static uint64 gc_scan_batch_size = 256;
-	constexpr static uint64 gc_delete_batch_size = 256 * 1024;
 
-private:
 	Query select_count_TABLE = "select count(*) from SQLITE_MASTER";  // void -> count: uint64
 
 	Query create_STATIC = "create table STATIC (data BLOB)";  // void -> void
@@ -51,7 +44,6 @@ private:
 	Query update_STATIC_data = "update STATIC set data = ?";  // data: vector<byte> -> void
 
 	Query insert_id_OBJECT_gc = "insert into OBJECT (gc) values (?) returning id";  // gc: bool -> id: index_t
-	Query delete_OBJECT_id = "delete from OBJECT where id = ?";  // id: index_t -> void
 
 	Query select_data_OBJECT_id = "select data from OBJECT where id = ?";  // id: index_t -> data: vector<byte>
 	Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // data: vector<byte>, ref: vector<index_t>, id: index_t -> void
@@ -68,8 +60,9 @@ private:
 	Query delete_OBJECT_begin_end_gc = "delete from OBJECT where id in (select id from OBJECT where id >= ? and id < ? and gc = ?)";  // begin: index_t, end: index_t, gc: bool -> void
 
 public:
-	DB(const char file[]) : Database(file), metadata() {
+	DB(const char file[]) : Database(file) {
 		if (ExecuteForOne<uint64>(select_count_TABLE) != table_count) {
+			Metadata metadata;
 			Transaction([&]() {
 				Execute(create_STATIC);
 				Execute(create_OBJECT);
@@ -80,55 +73,33 @@ public:
 				metadata.gc_phase = GcPhase::Idle;
 				metadata.block_count_last_gc = 0;
 				metadata.root_index = ExecuteInsertOne();
-				metadata.root_initialized = false;
 				Execute(insert_STATIC_data, Serialize(metadata));
 			});
+			this->metadata = metadata;
 		} else {
 			metadata = Deserialize<Metadata>(ExecuteForOne<std::vector<byte>>(select_data_STATIC));
 			if (metadata.version != schema_version) {
 				throw std::runtime_error("metadata version doesn't match");
 			}
-			if (!metadata.root_initialized) {
-				new_index_set.emplace(metadata.root_index);
-			}
 		}
-	}
-	~DB() {
-		Transaction([&]() {
-			if (!metadata.root_initialized) {
-				if (!new_index_set.contains(metadata.root_index)) {
-					metadata.root_initialized = true;
-					ExecuteUpdateMetadata();
-				} else {
-					new_index_set.erase(metadata.root_index);
-				}
-			}
-			for (index_t index : new_index_set) {
-				Execute(delete_OBJECT_id, index);
-			}
-			for (index_t index : allocation_list) {
-				Execute(delete_OBJECT_id, index);
-			}
-		});
 	}
 
 private:
 	Metadata metadata;
+public:
+	index_t get_root() { return metadata.root_index; }
 private:
-	void ExecuteUpdateMetadata() {
+	void ExecuteUpdateMetadata(Metadata metadata) {
 		Execute(update_STATIC_data, Serialize(metadata));
 	}
 	index_t ExecuteInsertOne() {
 		return ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
 	}
-public:
-	index_t get_root() {
-		return metadata.root_index;
-	}
 
 private:
+	constexpr static uint64 allocation_batch_size = 32;
+private:
 	std::vector<index_t> allocation_list;
-	std::unordered_set<index_t> new_index_set;
 public:
 	index_t allocate_index() {
 		if (allocation_list.empty()) {
@@ -145,24 +116,14 @@ public:
 			}
 		}
 		index_t index = allocation_list.back(); allocation_list.pop_back();
-		new_index_set.emplace(index);
 		return index;
 	}
 
 public:
-	void transaction(std::function<void()> op) {
-		Transaction(std::move(op));
-	}
-public:
 	std::vector<byte> read(index_t index) {
-		if (new_index_set.contains(index)) {
-			return {};
-		} else {
-			return ExecuteForOne<std::vector<byte>>(select_data_OBJECT_id, index);
-		}
+		return ExecuteForOne<std::vector<byte>>(select_data_OBJECT_id, index);
 	}
 	void write(index_t index, std::vector<byte> data, std::vector<index_t> ref) {
-		new_index_set.erase(index);
 		Transaction([&]() {
 			if (metadata.gc_phase != GcPhase::Scanning) {
 				Execute(update_OBJECT_data_ref_id, data, ref, index);
@@ -174,11 +135,24 @@ public:
 					}
 				}
 			}
+
+			// error when sweeping writing with unmarked ref
 		});
 	}
+public:
+	void transaction(std::function<void()> op) {
+		Transaction(std::move(op));
+	}
 
+private:
+	constexpr static uint64 gc_scan_step_depth = 64;
+	constexpr static uint64 gc_scan_changes_limit = 16 * 1024;
+	constexpr static uint64 gc_scan_batch_size = 256;
+	constexpr static uint64 gc_delete_batch_size = 256 * 1024;
 public:
 	void collect_garbage() {
+		Metadata metadata = this->metadata;
+
 		switch (metadata.gc_phase) {
 		case GcPhase::Idle: goto idle;
 		case GcPhase::Scanning: goto scanning;
@@ -191,8 +165,9 @@ public:
 			metadata.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
 			metadata.block_count_marked = 0;
 			metadata.gc_phase = GcPhase::Scanning;
-			ExecuteUpdateMetadata();
+			ExecuteUpdateMetadata(metadata);
 		});
+		this->metadata = metadata;
 
 	scanning:
 		for (;;) {
@@ -200,21 +175,22 @@ public:
 			Transaction([&]() {
 				uint64 changes = 0;
 				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_changes_limit; ++i) {
+					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(update_ref_OBJECT_gc, !metadata.gc_mark, gc_scan_batch_size, metadata.gc_mark);
+					changes += Changes();
+					Execute(delete_SCAN_limit, gc_scan_batch_size);
+					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_SCAN_id, id); } }
 					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) {
 						finish = true;
 						metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
 						metadata.gc_delete_index = 0;
 						metadata.gc_phase = GcPhase::Sweeping;
-						ExecuteUpdateMetadata();
+						ExecuteUpdateMetadata(metadata);
 						return;
 					}
-					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(update_ref_OBJECT_gc, !metadata.gc_mark, gc_scan_batch_size, metadata.gc_mark);
-					changes += Changes();
-					Execute(delete_SCAN_limit, gc_scan_batch_size);
-					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_SCAN_id, id); } }
 				}
 				metadata.block_count_marked += changes;
 			});
+			this->metadata = metadata;
 			if (finish) { break; }
 
 			// interrupt
@@ -233,8 +209,9 @@ public:
 					metadata.gc_phase = GcPhase::Idle;
 					metadata.block_count_last_gc = ExecuteForOne<uint64>(select_count_OBJECT);
 				}
-				ExecuteUpdateMetadata();
+				ExecuteUpdateMetadata(metadata);
 			});
+			this->metadata = metadata;
 			if (finish) { break; }
 
 			// interrupt
