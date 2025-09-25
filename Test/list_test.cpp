@@ -1,42 +1,46 @@
-#include "BlockStore/block_manager.h"
+#include "BlockStore/List.h"
 
 #include <iostream>
-
 
 using namespace BlockStore;
 
 
-struct Node {
-	int number = 0;
-	std::optional<block<Node>> next = std::nullopt;
-};
-
-auto layout(layout_type<Node>) { return declare(&Node::number, &Node::next); }
-
-
-void PrintList(block<std::optional<block<Node>>> root) {
-	for (auto current = root.read(); current != std::nullopt;) {
-		auto data = current.value().read();
-		std::cout << data.number << std::endl;
-		current = data.next;
+void print_list(auto list) {
+	for (auto i : list) {
+		std::cout << i << ' ';
 	}
-}
-
-void AppendList(block<std::optional<block<Node>>> root) {
-	auto data = root.read();
-	block<Node> next;
-	next.write(data == std::nullopt ? Node{} : Node{ data.value().read().number + 1, data.value() });
-	root.write(next);
+	std::cout << std::endl;
 }
 
 int main() {
-	block_manager.open_file("block_test.db");
-	block<std::optional<block<Node>>> root = block_manager.get_root();
-	block_manager.transaction([&]() {
-		for (int i = 0; i < 1000; ++i) {
-			AppendList(root);
-		}
-	});
-	PrintList(root);
+	try {
+		block_manager.open_file("list_test.db");
+	} catch (const std::exception& e) {
+		std::cout << e.what();
+		std::remove("list_test.db");
+		return 0;
+	}
+
+	List<std::string> list(block_manager.get_root());
+
+	try {
+		block_manager.transaction([&]() {
+			for (int i = 0; i < 10; ++i) {
+				list.push_back(std::to_string(i));
+			}
+		});
+		print_list(list);
+	} catch (...) {
+		block<std::tuple<>>(block_manager.get_root()).write({});
+		return 0;
+	}
+
+	list.pop_front();
+	print_list(list);
+	block_manager.collect_garbage();
+
+	list.clear();
+	block_manager.collect_garbage();
+
 	return 0;
 }
