@@ -72,7 +72,7 @@ public:
 				metadata.gc_mark = false;
 				metadata.gc_phase = GcPhase::Idle;
 				metadata.block_count_last_gc = 0;
-				metadata.root_index = ExecuteInsertOne();
+				metadata.root_index = ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
 				Execute(insert_STATIC_data, Serialize(metadata));
 			});
 			this->metadata = metadata;
@@ -92,9 +92,6 @@ private:
 	void ExecuteUpdateMetadata(Metadata metadata) {
 		Execute(update_STATIC_data, Serialize(metadata));
 	}
-	index_t ExecuteInsertOne() {
-		return ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
-	}
 
 private:
 	constexpr static uint64 allocation_batch_size = 32;
@@ -107,7 +104,7 @@ public:
 				allocation_list.reserve(allocation_batch_size);
 				Transaction([&]() {
 					while (allocation_list.size() < allocation_batch_size) {
-						allocation_list.emplace_back(ExecuteInsertOne());
+						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark));
 					}
 				});
 			} catch (...) {
@@ -179,16 +176,15 @@ public:
 					changes += Changes();
 					Execute(delete_SCAN_limit, gc_scan_batch_size);
 					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_SCAN_id, id); } }
-					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) {
-						finish = true;
-						metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
-						metadata.gc_delete_index = 0;
-						metadata.gc_phase = GcPhase::Sweeping;
-						ExecuteUpdateMetadata(metadata);
-						return;
-					}
+					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) { finish = true; break; }
 				}
 				metadata.block_count_marked += changes;
+				if (finish) {
+					metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
+					metadata.gc_delete_index = 0;
+					metadata.gc_phase = GcPhase::Sweeping;
+					ExecuteUpdateMetadata(metadata);
+				}
 			});
 			this->metadata = metadata;
 			if (finish) { break; }
