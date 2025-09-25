@@ -20,10 +20,10 @@ private:
 public:
 	operator index_t() const { return index; }
 protected:
-	void deserialize_begin();
-	void deserialize_end();
+	static void deserialize_begin();
+	static void deserialize_end();
 protected:
-	std::vector<std::byte> read();
+	std::vector<std::byte> read() const;
 	void write(std::vector<std::byte> data, std::vector<index_t> ref);
 };
 

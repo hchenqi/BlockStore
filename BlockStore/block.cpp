@@ -256,7 +256,7 @@ void block_ref::deserialize_begin() { deserializing = true; }
 
 void block_ref::deserialize_end() { deserializing = false; }
 
-std::vector<byte> block_ref::read() { return db().read(index); }
+std::vector<byte> block_ref::read() const { return db().read(index); }
 
 void block_ref::write(std::vector<byte> data, std::vector<index_t> ref) { return db().write(index, std::move(data), std::move(ref)); }
 

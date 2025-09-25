@@ -16,7 +16,7 @@ public:
 public:
 	constexpr static size_t size_limit = 4096; // byte
 public:
-	T read() {
+	T read(auto init) const {
 		if (auto data = block_ref::read(); !data.empty()) {
 			deserialize_begin();
 			T object;
@@ -25,13 +25,16 @@ public:
 			deserialize_end();
 			return object;
 		} else {
-			T object;
+			T object(init());
 			BlockSizeContext size_context; size_context.add(object);
 			if (size_context.GetIndexSize()) {
-				write(object);
+				const_cast<block<T>&>(*this).write(object);
 			}
 			return object;
 		}
+	}
+	T read() const {
+		return read([]() { return T(); });
 	}
 	void write(const T& object) {
 		BlockSizeContext size_context; size_context.add(object);
