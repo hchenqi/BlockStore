@@ -136,10 +136,6 @@ public:
 			// error when sweeping writing with unmarked ref
 		});
 	}
-public:
-	void transaction(std::function<void()> op) {
-		Transaction(std::move(op));
-	}
 
 private:
 	constexpr static uint64 gc_scan_step_depth = 64;
@@ -241,9 +237,13 @@ void BlockManager::open_file(const char file[]) {
 
 block_ref BlockManager::get_root() { return db().get_root(); }
 
-void BlockManager::transaction(std::function<void(void)> op) { return db().transaction(std::move(op)); }
-
 void BlockManager::collect_garbage() { return db().collect_garbage(); }
+
+void BlockManager::begin_transaction() { db().BeginTransaction(); }
+
+void BlockManager::commit() { db().Commit(); }
+
+void BlockManager::rollback() { db().Rollback(); }
 
 
 block_ref::block_ref() : index(deserializing ? 0 : db().allocate_index()) {}
