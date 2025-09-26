@@ -49,12 +49,11 @@ public:
 
 END_NAMESPACE(BlockStore)
 
-
 BEGIN_NAMESPACE(CppSerialize)
 
 
 template<class T>
-constexpr bool has_trivial_layout<BlockStore::block<T>> = true;
+constexpr bool is_layout_trivial<BlockStore::block<T>> = true;
 
 
 END_NAMESPACE(CppSerialize)

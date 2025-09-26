@@ -27,7 +27,7 @@ using namespace CppSerialize;
 
 class DB : public Database {
 private:
-	constexpr static uint64 schema_version = 2025'09'25'1;
+	constexpr static uint64 schema_version = 2025'09'27'0;
 
 	enum GcPhase : unsigned char { Idle, Scanning, Sweeping };
 

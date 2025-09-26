@@ -2,6 +2,8 @@
 
 #include "core.h"
 
+#include "CppSerialize/layout.h"
+
 #include <vector>
 
 
@@ -32,3 +34,14 @@ constexpr bool is_block_ref = std::is_base_of_v<block_ref, T>;
 
 
 END_NAMESPACE(BlockStore)
+
+BEGIN_NAMESPACE(CppSerialize)
+
+
+static_assert(sizeof(BlockStore::block_ref) == sizeof(BlockStore::index_t));
+
+template<>
+constexpr bool is_layout_trivial<BlockStore::block_ref> = true;
+
+
+END_NAMESPACE(CppSerialize)

@@ -5,20 +5,6 @@
 #include "CppSerialize/context.h"
 
 
-BEGIN_NAMESPACE(CppSerialize)
-
-using namespace BlockStore;
-
-
-static_assert(sizeof(block_ref) == sizeof(index_t));
-
-template<>
-constexpr bool has_trivial_layout<block_ref> = true;
-
-
-END_NAMESPACE(CppSerialize)
-
-
 BEGIN_NAMESPACE(BlockStore)
 
 using namespace CppSerialize;
@@ -30,27 +16,23 @@ private:
 public:
 	BlockSizeContext() : SizeContext(), index_size(0) {}
 public:
-	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
+	template<class T> requires (is_layout_trivial<T> && !is_block_ref<T>)
 	void add(const T&) {
-		align_offset<T>(size);
-		size += sizeof(T);
+		size += layout_traits<T>::size();
 	}
-	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
+	template<class T> requires (is_layout_trivial<T> && !is_block_ref<T>)
 	void add(const T[], size_t count) {
-		align_offset<T>(size);
-		size += sizeof(T) * count;
+		size += layout_traits<T>::size() * count;
 	}
-	template<class T> requires (!has_trivial_layout<T> && !is_block_ref<T>)
+	template<class T> requires (!is_layout_trivial<T> && !is_block_ref<T>)
 	void add(const T& obj) {
-		Read([&](auto&& ...args) { add(std::forward<decltype(args)>(args)...); }, obj);
+		layout_traits<T>::read([&](auto&& ...args) { add(std::forward<decltype(args)>(args)...); }, obj);
 	}
 	void add(const block_ref&) {
-		align_offset<index_t>(size);
 		size += sizeof(index_t);
 		index_size++;
 	}
 	void add(const block_ref[], size_t count) {
-		align_offset<index_t>(size);
 		size += sizeof(index_t) * count;
 		index_size += count;
 	}
@@ -70,28 +52,28 @@ public:
 private:
 	void CheckIndexOffset(const index_t* offset) { if (offset > index_end) { throw std::runtime_error("block save error"); } }
 public:
-	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
+	template<class T> requires (is_layout_trivial<T> && !is_block_ref<T>)
 	void save(const T& object) {
-		align_offset<T>(curr); byte* next = curr + sizeof(T); CheckOffset(next);
+		byte* next = curr + sizeof(T); CheckOffset(next);
 		memcpy(curr, &object, sizeof(T)); curr = next;
 	}
-	template<class T> requires (has_trivial_layout<T> && !is_block_ref<T>)
+	template<class T> requires (is_layout_trivial<T> && !is_block_ref<T>)
 	void save(const T object[], size_t count) {
-		align_offset<T>(curr); byte* next = curr + sizeof(T) * count; CheckOffset(next);
+		byte* next = curr + sizeof(T) * count; CheckOffset(next);
 		memcpy(curr, object, sizeof(T) * count); curr = next;
 	}
-	template<class T> requires (!has_trivial_layout<T> && !is_block_ref<T>)
+	template<class T> requires (!is_layout_trivial<T> && !is_block_ref<T>)
 	void save(const T& obj) {
-		Read([&](auto&& ...args) { save(std::forward<decltype(args)>(args)...); }, obj);
+		layout_traits<T>::read([&](auto&& ...args) { save(std::forward<decltype(args)>(args)...); }, obj);
 	}
 	void save(const block_ref& index) {
-		align_offset<index_t>(curr); byte* next = curr + sizeof(index_t); CheckOffset(next);
+		byte* next = curr + sizeof(index_t); CheckOffset(next);
 		memcpy(curr, &index, sizeof(index_t)); curr = next;
 		index_t* index_next = index_curr + 1; CheckIndexOffset(index_next);
 		memcpy(index_curr, &index, sizeof(index_t)); index_curr = index_next;
 	}
 	void save(const block_ref index[], size_t count) {
-		align_offset<index_t>(curr); byte* next = curr + sizeof(index_t) * count; CheckOffset(next);
+		byte* next = curr + sizeof(index_t) * count; CheckOffset(next);
 		memcpy(curr, index, sizeof(index_t) * count); curr = next;
 		index_t* index_next = index_curr + count; CheckIndexOffset(index_next);
 		memcpy(index_curr, index, sizeof(index_t) * count); index_curr = index_next;
