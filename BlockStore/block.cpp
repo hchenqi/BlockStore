@@ -2,9 +2,21 @@
 #include "CppSerialize/cpp_serialize.h"
 #include "SQLite3Helper/sqlite3_helper.h"
 
+#include <cassert>
 #include <memory>
 #include <unordered_set>
 #include <vector>
+
+
+BEGIN_NAMESPACE(BlockStore)
+
+
+size_t block_ref::ObjectCount::count;
+
+struct block_ref_access {
+	static block_ref construct(index_t index) { return block_ref(index); }
+	static size_t count_object() { return block_ref::GetCount(); }
+};
 
 
 BEGIN_NAMESPACE(Anonymous)
@@ -87,7 +99,7 @@ public:
 private:
 	Metadata metadata;
 public:
-	index_t get_root() { return metadata.root_index; }
+	block_ref get_root() { return block_ref_access::construct(metadata.root_index); }
 private:
 	void ExecuteUpdateMetadata(Metadata metadata) {
 		Execute(update_STATIC_data, Serialize(metadata));
@@ -104,7 +116,7 @@ public:
 				allocation_list.reserve(allocation_batch_size);
 				Transaction([&]() {
 					while (allocation_list.size() < allocation_batch_size) {
-						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark));
+						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_phase == GcPhase::Sweeping? !metadata.gc_mark : metadata.gc_mark));
 					}
 				});
 			} catch (...) {
@@ -124,6 +136,7 @@ public:
 		Transaction([&]() {
 			if (metadata.gc_phase != GcPhase::Scanning) {
 				Execute(update_OBJECT_data_ref_id, data, ref, index);
+				assert(Changes() > 0);
 			} else {
 				bool gc = (bool)ExecuteForOne<uint64>(update_gc_OBJECT_data_ref_id, data, ref, index);
 				if (gc == !metadata.gc_mark) {
@@ -132,8 +145,6 @@ public:
 					}
 				}
 			}
-
-			// error when sweeping writing with unmarked ref
 		});
 	}
 
@@ -168,14 +179,18 @@ public:
 			Transaction([&]() {
 				uint64 changes = 0;
 				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_changes_limit; ++i) {
+					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) { finish = true; break; }
 					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(update_ref_OBJECT_gc, !metadata.gc_mark, gc_scan_batch_size, metadata.gc_mark);
 					changes += Changes();
 					Execute(delete_SCAN_limit, gc_scan_batch_size);
 					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_SCAN_id, id); } }
-					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) { finish = true; break; }
 				}
 				metadata.block_count_marked += changes;
 				if (finish) {
+					if (block_ref_access::count_object() > 0) {
+						return;
+					}
+					allocation_list.clear();
 					metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
 					metadata.gc_delete_index = 0;
 					metadata.gc_phase = GcPhase::Sweeping;
@@ -186,6 +201,9 @@ public:
 			if (finish) { break; }
 
 			// interrupt
+		}
+		if (metadata.gc_phase != GcPhase::Sweeping) {
+			return;
 		}
 
 	sweeping:
@@ -225,9 +243,6 @@ DB& db() {
 END_NAMESPACE(Anonymous)
 
 
-BEGIN_NAMESPACE(BlockStore)
-
-
 void BlockManager::open_file(const char file[]) {
 	if (pdb) {
 		throw std::invalid_argument("open_file can only be called once");
@@ -246,7 +261,9 @@ void BlockManager::commit() { db().Commit(); }
 void BlockManager::rollback() { db().Rollback(); }
 
 
-block_ref::block_ref() : index(deserializing ? 0 : db().allocate_index()) {}
+block_ref::block_ref(index_t index) : index(index) {}
+
+block_ref::block_ref() : block_ref(deserializing ? 0 : db().allocate_index()) {}
 
 void block_ref::deserialize_begin() { deserializing = true; }
 

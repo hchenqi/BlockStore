@@ -8,15 +8,15 @@
 BEGIN_NAMESPACE(BlockStore)
 
 
-struct block_ref {
+class block_ref : private ObjectCount<block_ref> {
 private:
-	friend class BlockManager;
+	friend struct block_ref_access;
 	template<class T> friend class block;
 private:
 	index_t index;
 private:
+	block_ref(index_t index);
 	block_ref();
-	block_ref(index_t index) : index(index) {}
 public:
 	operator index_t() const { return index; }
 protected:
