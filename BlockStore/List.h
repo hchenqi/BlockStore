@@ -9,14 +9,14 @@ template<class T>
 class List {
 public:
 	struct Node {
-		T value;
 		block<Node> next;
 		block<Node> prev;
+		T value;
 
 		Node() = default;
-		Node(T value, block<Node> next, block<Node> prev) : value(value), next(next), prev(prev) {}
+		Node(block<Node> next, block<Node> prev, T value) : next(next), prev(prev), value(value) {}
 	};
-	friend auto layout(layout_type<Node>) { return declare(&Node::value, &Node::next, &Node::prev); }
+	friend auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
 
 	struct Sentinel {
 		block<Node> next;
@@ -88,7 +88,7 @@ public:
 	void push_back(T value) {
 		block_manager.transaction([&]() {
 			block<Node> new_node;
-			new_node.write(Node(std::move(value), root.ref(), root.get().prev));
+			new_node.write(Node(root.ref(), root.get().prev, std::move(value)));
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
@@ -119,7 +119,7 @@ public:
 	void push_front(T value) {
 		block_manager.transaction([&]() {
 			block<Node> new_node;
-			new_node.write(Node(std::move(value), root.get().next, root.ref()));
+			new_node.write(Node(root.get().next, root.ref(), std::move(value)));
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
