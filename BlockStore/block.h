@@ -2,8 +2,6 @@
 
 #include "serializer.h"
 
-#include "CppSerialize/layout_traits_stl.h"
-
 
 BEGIN_NAMESPACE(BlockStore)
 
@@ -14,20 +12,13 @@ public:
 	block() : block_ref() {}
 	block(block_ref ref) : block_ref(ref) {}
 public:
-	constexpr static size_t size_limit = 4096; // byte
-public:
 	T read(auto init) const {
 		if (auto data = block_ref::read(); !data.empty()) {
-			deserialize_begin();
-			T object;
-			BlockLoadContext load_context(data.data(), data.size());
-			load_context.load(object);
-			deserialize_end();
-			return object;
+			return BlockDeserialize<T>(data).Get();
 		} else {
 			T object(init());
-			BlockSizeContext size_context; size_context.add(object);
-			if (size_context.GetIndexSize()) {
+			auto [size, ref_size] = BlockSize(object).Get();
+			if (ref_size > 0) {
 				const_cast<block<T>&>(*this).write(object);
 			}
 			return object;
@@ -37,12 +28,8 @@ public:
 		return read([]() { return T(); });
 	}
 	void write(const T& object) {
-		BlockSizeContext size_context; size_context.add(object);
-		if (size_context.GetSize() > size_limit) { throw std::runtime_error("block size exceeds the limit"); }
-		std::vector<byte> data(size_context.GetSize()); std::vector<index_t> ref(size_context.GetIndexSize());
-		BlockSaveContext save_context(data.data(), data.size(), ref.data(), ref.size());
-		save_context.save(object);
-		block_ref::write(std::move(data), std::move(ref));
+		auto [data, ref] = BlockSerialize(object).Get();
+		block_ref::write(data, ref);
 	}
 };
 
@@ -53,7 +40,11 @@ BEGIN_NAMESPACE(CppSerialize)
 
 
 template<class T>
-constexpr bool is_layout_trivial<BlockStore::block<T>> = true;
+struct layout_traits<BlockStore::block<T>> {
+	constexpr static layout_size size() { return layout_size(layout_type<BlockStore::block_ref>()); }
+	constexpr static void read(auto f, const auto& object) { return f(static_cast<const BlockStore::block_ref&>(object)); }
+	constexpr static void write(auto f, auto& object) { return f(static_cast<BlockStore::block_ref&>(object)); }
+};
 
 
 END_NAMESPACE(CppSerialize)

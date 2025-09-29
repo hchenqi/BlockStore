@@ -1,5 +1,4 @@
 #include "BlockStore/block_manager.h"
-#include "BlockStore/block.h"
 
 #include <iostream>
 
@@ -9,10 +8,10 @@ using namespace BlockStore;
 
 int main() {
 	try {
-		block_manager.open_file("block_test.db");
+		block_manager.open_file("file_test.db");
 	} catch (const std::exception& e) {
 		std::cout << e.what();
-		std::remove("block_test.db");
+		std::remove("file_test.db");
 		return 0;
 	}
 	block<uint64> root = block_manager.get_root();

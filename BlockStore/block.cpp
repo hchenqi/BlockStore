@@ -1,5 +1,5 @@
 #include "block_manager.h"
-#include "CppSerialize/cpp_serialize.h"
+#include "CppSerialize/serializer.h"
 #include "SQLite3Helper/sqlite3_helper.h"
 
 #include <cassert>
@@ -85,11 +85,11 @@ public:
 				metadata.gc_phase = GcPhase::Idle;
 				metadata.block_count_last_gc = 0;
 				metadata.root_index = ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
-				Execute(insert_STATIC_data, Serialize(metadata));
+				Execute(insert_STATIC_data, Serialize(metadata).Get());
 			});
 			this->metadata = metadata;
 		} else {
-			metadata = Deserialize<Metadata>(ExecuteForOne<std::vector<byte>>(select_data_STATIC));
+			metadata = Deserialize<Metadata>(ExecuteForOne<std::vector<byte>>(select_data_STATIC)).Get();
 			if (metadata.version != schema_version) {
 				throw std::runtime_error("metadata version doesn't match");
 			}
@@ -102,7 +102,7 @@ public:
 	block_ref get_root() { return block_ref_access::construct(metadata.root_index); }
 private:
 	void ExecuteUpdateMetadata(Metadata metadata) {
-		Execute(update_STATIC_data, Serialize(metadata));
+		Execute(update_STATIC_data, Serialize(metadata).Get());
 	}
 
 private:
@@ -132,7 +132,7 @@ public:
 	std::vector<byte> read(index_t index) {
 		return ExecuteForOne<std::vector<byte>>(select_data_OBJECT_id, index);
 	}
-	void write(index_t index, std::vector<byte> data, std::vector<index_t> ref) {
+	void write(index_t index, const std::vector<byte>& data, const std::vector<index_t>& ref) {
 		Transaction([&]() {
 			if (metadata.gc_phase != GcPhase::Scanning) {
 				Execute(update_OBJECT_data_ref_id, data, ref, index);
@@ -271,7 +271,7 @@ void block_ref::deserialize_end() { deserializing = false; }
 
 std::vector<byte> block_ref::read() const { return db().read(index); }
 
-void block_ref::write(std::vector<byte> data, std::vector<index_t> ref) { return db().write(index, std::move(data), std::move(ref)); }
+void block_ref::write(const std::vector<byte>& data, const std::vector<index_t>& ref) { return db().write(index, data, ref); }
 
 
 END_NAMESPACE(BlockStore)

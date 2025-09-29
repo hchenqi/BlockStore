@@ -2,7 +2,7 @@
 
 #include "core.h"
 
-#include "CppSerialize/layout.h"
+#include "CppSerialize/layout_traits.h"
 
 #include <vector>
 
@@ -14,6 +14,7 @@ class block_ref : private ObjectCount<block_ref> {
 private:
 	friend struct block_ref_access;
 	template<class T> friend class block;
+	template<class T> friend class BlockDeserialize;
 private:
 	index_t index;
 private:
@@ -21,16 +22,13 @@ private:
 	block_ref();
 public:
 	operator index_t() const { return index; }
-protected:
+private:
 	static void deserialize_begin();
 	static void deserialize_end();
-protected:
+private:
 	std::vector<std::byte> read() const;
-	void write(std::vector<std::byte> data, std::vector<index_t> ref);
+	void write(const std::vector<std::byte>& data, const std::vector<index_t>& ref);
 };
-
-template<class T>
-constexpr bool is_block_ref = std::is_base_of_v<block_ref, T>;
 
 
 END_NAMESPACE(BlockStore)
@@ -41,7 +39,9 @@ BEGIN_NAMESPACE(CppSerialize)
 static_assert(sizeof(BlockStore::block_ref) == sizeof(BlockStore::index_t));
 
 template<>
-constexpr bool is_layout_trivial<BlockStore::block_ref> = true;
+struct layout_traits<BlockStore::block_ref> {
+	struct trivial {};
+};
 
 
 END_NAMESPACE(CppSerialize)
