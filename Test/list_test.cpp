@@ -35,7 +35,7 @@ int main() {
 		List<std::string> list(block_manager.get_root());
 		block_manager.transaction([&]() {
 			for (int i = 0; i < 10; ++i) {
-				list.push_back(std::to_string(i));
+				list.emplace_back(std::to_string(i));
 			}
 		});
 		print_list(list);
@@ -52,7 +52,7 @@ int main() {
 
 		block_manager.transaction([&]() {
 			for (int i = 0; i < 5; ++i) {
-				list.push_front(std::to_string(i));
+				list.emplace_front(std::to_string(i));
 			}
 		});
 		print_list(list);

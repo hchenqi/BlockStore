@@ -7,16 +7,18 @@ BEGIN_NAMESPACE(BlockStore)
 
 template<class T>
 class List {
-public:
+private:
 	struct Node {
 		block<Node> next;
 		block<Node> prev;
 		T value;
 
 		Node() = default;
-		Node(block<Node> next, block<Node> prev, T value) : next(next), prev(prev), value(value) {}
+
+		template <class... Args>
+		Node(block<Node> next, block<Node> prev, Args&&... args) : next(next), prev(prev), value(std::forward<Args>(args)...) {}
 	};
-	friend auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
+	friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
 
 	struct Sentinel {
 		block<Node> next;
@@ -26,10 +28,13 @@ public:
 		Sentinel(block_ref initial) : next(initial), prev(initial) {}
 		Sentinel(block<Node> next, block<Node> prev) : next(next), prev(prev) {}
 	};
-	friend auto layout(layout_type<Sentinel>) { return declare(&Sentinel::next, &Sentinel::prev); }
+	friend constexpr auto layout(layout_type<Sentinel>) { return declare(&Sentinel::next, &Sentinel::prev); }
 
 public:
 	class iterator {
+	private:
+		friend class List;
+
 	private:
 		block_cache_lazy<Node> curr;
 		const block<Node> end;
@@ -85,10 +90,11 @@ public:
 		root.set(Sentinel(root.ref(), root.ref()));
 	}
 
-	void push_back(T value) {
-		block_manager.transaction([&]() {
+	template <class... Args>
+	iterator emplace_back(Args&&... args) {
+		return block_manager.transaction([&]() {
 			block<Node> new_node;
-			new_node.write(Node(root.ref(), root.get().prev, std::move(value)));
+			new_node.write(Node(root.ref(), root.get().prev, std::forward<Args>(args)...));
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
@@ -96,15 +102,16 @@ public:
 				back.update([&](Node& n) { n.next = new_node; });
 				root.update([&](Sentinel& r) { r.prev = new_node; });
 			}
+			return iterator(new_node, root.ref());
 		});
 	}
 
-	T pop_back() {
+	void pop_back() {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
-		block_cache<Node> back(root.get().prev);
 		block_manager.transaction([&]() {
+			block_cache<Node> back(root.get().prev);
 			if (back.get().prev == root.ref()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root.ref(); });
 			} else {
@@ -113,13 +120,13 @@ public:
 				root.update([&](Sentinel& r) { r.prev = prev.ref(); });
 			}
 		});
-		return back.get().value;
 	}
 
-	void push_front(T value) {
-		block_manager.transaction([&]() {
+	template <class... Args>
+	iterator emplace_front(Args&&... args) {
+		return block_manager.transaction([&]() {
 			block<Node> new_node;
-			new_node.write(Node(root.get().next, root.ref(), std::move(value)));
+			new_node.write(Node(root.get().next, root.ref(), std::forward<Args>(args)...));
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
@@ -127,15 +134,16 @@ public:
 				front.update([&](Node& n) { n.prev = new_node; });
 				root.update([&](Sentinel& r) { r.next = new_node; });
 			}
+			return iterator(new_node, root.ref());
 		});
 	}
 
-	T pop_front() {
+	void pop_front() {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
-		block_cache<Node> front(root.get().next);
 		block_manager.transaction([&]() {
+			block_cache<Node> front(root.get().next);
 			if (front.get().next == root.ref()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root.ref(); });
 			} else {
@@ -144,7 +152,6 @@ public:
 				root.update([&](Sentinel& r) { r.next = next.ref(); });
 			}
 		});
-		return front.get().value;
 	}
 };
 
