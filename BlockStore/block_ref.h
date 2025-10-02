@@ -36,12 +36,10 @@ END_NAMESPACE(BlockStore)
 BEGIN_NAMESPACE(CppSerialize)
 
 
-static_assert(sizeof(BlockStore::block_ref) == sizeof(BlockStore::index_t));
-
 template<>
-struct layout_traits<BlockStore::block_ref> {
-	struct trivial {};
-};
+struct layout_traits<BlockStore::block_ref> : layout_traits_trivial<BlockStore::block_ref> {};
+
+static_assert(layout_traits<BlockStore::block_ref>::size() == sizeof(BlockStore::index_t));
 
 
 END_NAMESPACE(CppSerialize)

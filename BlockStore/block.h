@@ -31,20 +31,13 @@ public:
 		auto [data, ref] = BlockSerialize(object).Get();
 		block_ref::write(data, ref);
 	}
+public:
+	using layout_base = block_ref;
 };
 
+
+using CppSerialize::layout_type;
+using CppSerialize::layout;
+using CppSerialize::declare;
 
 END_NAMESPACE(BlockStore)
-
-BEGIN_NAMESPACE(CppSerialize)
-
-
-template<class T>
-struct layout_traits<BlockStore::block<T>> {
-	constexpr static layout_size size() { return layout_size(layout_type<BlockStore::block_ref>()); }
-	constexpr static void read(auto f, const auto& object) { return f(static_cast<const BlockStore::block_ref&>(object)); }
-	constexpr static void write(auto f, auto& object) { return f(static_cast<BlockStore::block_ref&>(object)); }
-};
-
-
-END_NAMESPACE(CppSerialize)
