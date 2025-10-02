@@ -40,10 +40,31 @@ int main() {
 		});
 		print_list(list);
 
+		list.emplace(++++list.begin(), "1.5");
+		print_list(list);
+
+		list.emplace(list.begin(), "-1");
+		print_list(list);
+
+		list.emplace(list.end(), "10");
+		print_list(list);
+
 		list.pop_front();
 		print_list(list);
 
 		list.pop_back();
+		print_list(list);
+
+		list.erase(list.begin());
+		print_list(list);
+
+		list.erase(--list.end());
+		print_list(list);
+
+		list.erase(++list.begin());
+		print_list(list);
+
+		list.erase(------list.end());
 		print_list(list);
 
 		block_manager.collect_garbage();
@@ -52,7 +73,7 @@ int main() {
 
 		block_manager.transaction([&]() {
 			for (int i = 0; i < 5; ++i) {
-				list.emplace_front(std::to_string(i));
+				list.emplace_front(std::to_string(-i));
 			}
 		});
 		print_list(list);

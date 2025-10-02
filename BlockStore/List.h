@@ -43,7 +43,6 @@ public:
 		iterator(block<Node> curr, block<Node> end) : curr(curr), end(end) {}
 
 		bool operator==(const iterator& other) const { return curr.ref() == other.curr.ref(); }
-		bool operator!=(const iterator& other) const { return curr.ref() != other.curr.ref(); }
 
 		const T& operator*() {
 			if (curr.ref() == end) {
@@ -106,22 +105,6 @@ public:
 		});
 	}
 
-	void pop_back() {
-		if (empty()) {
-			throw std::invalid_argument("list is empty");
-		}
-		block_manager.transaction([&]() {
-			block_cache<Node> back(root.get().prev);
-			if (back.get().prev == root.ref()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = root.ref(); });
-			} else {
-				block_cache<Node> prev(back.get().prev);
-				prev.update([&](Node& n) { n.next = root.ref(); });
-				root.update([&](Sentinel& r) { r.prev = prev.ref(); });
-			}
-		});
-	}
-
 	template <class... Args>
 	iterator emplace_front(Args&&... args) {
 		return block_manager.transaction([&]() {
@@ -138,6 +121,40 @@ public:
 		});
 	}
 
+	template <class... Args>
+	iterator emplace(iterator pos, Args&&... args) {
+		if (pos == end()) {
+			return emplace_back(std::forward<Args>(args)...);
+		}
+		if (pos == begin()) {
+			return emplace_front(std::forward<Args>(args)...);
+		}
+		return block_manager.transaction([&]() {
+			block_cache<Node> prev(pos.curr.get().prev);
+			block<Node> new_node;
+			new_node.write(Node(pos.curr.ref(), prev.ref(), std::forward<Args>(args)...));
+			prev.update([&](Node& n) { n.next = new_node; });
+			pos.curr.update([&](Node& n) { n.prev = new_node; });
+			return iterator(new_node, root.ref());
+		});
+	}
+
+	void pop_back() {
+		if (empty()) {
+			throw std::invalid_argument("list is empty");
+		}
+		block_manager.transaction([&]() {
+			block_cache<Node> back(root.get().prev);
+			if (back.get().prev == root.ref()) {
+				root.update([&](Sentinel& r) { r.next = r.prev = root.ref(); });
+			} else {
+				block_cache<Node> prev(back.get().prev);
+				prev.update([&](Node& n) { n.next = root.ref(); });
+				root.update([&](Sentinel& r) { r.prev = prev.ref(); });
+			}
+		});
+	}
+
 	void pop_front() {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
@@ -151,6 +168,24 @@ public:
 				next.update([&](Node& n) { n.prev = root.ref(); });
 				root.update([&](Sentinel& r) { r.next = next.ref(); });
 			}
+		});
+	}
+
+	void erase(iterator pos) {
+		if (pos == end()) {
+			throw std::invalid_argument("list erase iterator outside range");
+		}
+		if (pos.curr.get().next == root.ref()) {
+			return pop_back();
+		}
+		if (pos == begin()) {
+			return pop_front();
+		}
+		return block_manager.transaction([&]() {
+			block_cache<Node> prev(pos.curr.get().prev);
+			block_cache<Node> next(pos.curr.get().next);
+			prev.update([&](Node& n) { n.next = next.ref(); });
+			next.update([&](Node& n) { n.prev = prev.ref(); });
 		});
 	}
 };
