@@ -13,20 +13,20 @@ struct block_cache_shared_map {
 private:
 	static std::unordered_map<index_t, std::any> map;
 protected:
-	static bool has(block_ref ref) {
+	static bool has(const block_ref& ref) {
 		return map.contains(ref);
 	}
 	template<class T>
-	static T& get(block_ref ref) {
+	static T& get(const block_ref& ref) {
 		return std::any_cast<T&>(map.at(ref));
 	}
 	template<class T, class... Args>
-	static T& set(block_ref ref, Args&&... args) {
+	static T& set(const block_ref& ref, Args&&... args) {
 		return map[ref].emplace<T>(std::forward<Args>(args)...);
 	}
 protected:
 	template<class T>
-	static T& lookup(block<T> ref, auto init) {
+	static T& lookup(const block<T>& ref, auto init) {
 		if (block_cache_shared_map::has(ref)) {
 			return block_cache_shared_map::get<T>(ref);
 		} else {
@@ -39,43 +39,38 @@ protected:
 template <class T>
 class block_cache_lazy;
 
-
 template<class T>
-class block_cache : private block_cache_shared_map {
+class block_cache : public block<T>, private block_cache_shared_map {
 private:
 	friend class block_cache_lazy<T>;
 private:
-	block<T> r;
-	std::reference_wrapper<T> v;
+	std::reference_wrapper<const T> v;
 public:
-	block_cache(block<T> ref, auto init) : r(ref), v(lookup(r, std::move(init))) {}
-	block_cache(block<T> ref) : block_cache(ref, []() { return T(); }) {}
+	block_cache(const block<T>& ref, auto init) : block<T>(ref), v(block_cache_shared_map::lookup(*this, std::move(init))) {}
+	block_cache(const block<T>& ref) : block_cache(ref, []() { return T(); }) {}
 	template<class... Args> requires std::constructible_from<T, Args...>
-	block_cache(Args&&... args) : r(block<T>()), v(block_cache_shared_map::set<T>(r, std::forward<Args>(args)...)) { r.write(v); }
+	block_cache(std::in_place_t, Args&&... args) : block<T>(), v(set(std::forward<Args>(args)...)) {}
 public:
-	block<T> ref() const { return r; }
 	const T& get() const { return v; }
-	const T& set(T&& object) { r.write(v.get() = std::move(object)); return v; }
-	const T& set(const T& object) { r.write(v.get() = object); return v; }
-	const T& update(auto f) { f(v); r.write(v); return v; }
+	template<class... Args>
+	const T& set(Args&&... args) { v = block_cache_shared_map::set<T>(*this, std::forward<Args>(args)...); block<T>::write(v); return v; }
+	const T& update(auto f) { f(const_cast<T&>(get())); block<T>::write(v); return v; }
 };
 
 
 template<class T>
-class block_cache_lazy : private block_cache_shared_map {
+class block_cache_lazy : public block<T>, private block_cache_shared_map {
 private:
-	block<T> r;
-	mutable T* v;
+	mutable const T* v;
 public:
-	block_cache_lazy(block<T> ref) : r(ref), v(nullptr) {}
-	block_cache_lazy(block_cache<T> cache) : r(cache.r), v(&cache.v.get()) {}
+	block_cache_lazy(const block<T>& ref) : block<T>(ref), v(nullptr) {}
+	block_cache_lazy(const block_cache<T>& cache) : block<T>(cache), v(&cache.v.get()) {}
 public:
-	block<T> ref() const { return r; }
-	const T& get(auto init) const { if (v == nullptr) { v = &lookup(r, std::move(init)); } return *v; }
+	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared_map::lookup(*this, std::move(init)); } return *v; }
 	const T& get() const { return get([]() { return T(); }); }
 	template<class... Args>
-	const T& set(Args&&... args) { v = &block_cache_shared_map::set<T>(r, std::forward<Args>(args)...); r.write(*v); return *v; }
-	const T& update(auto f, auto init) { f(const_cast<T&>(get(std::move(init)))); r.write(*v); return *v; }
+	const T& set(Args&&... args) { v = &block_cache_shared_map::set<T>(*this, std::forward<Args>(args)...); block<T>::write(*v); return *v; }
+	const T& update(auto f, auto init) { f(const_cast<T&>(get(std::move(init)))); block<T>::write(*v); return *v; }
 	const T& update(auto f) { return update(std::move(f), []() { return T(); }); }
 };
 

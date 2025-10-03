@@ -36,23 +36,23 @@ public:
 		friend class List;
 
 	private:
+		const block_cache<Sentinel>& root;
 		block_cache_lazy<Node> curr;
-		const block_cache<Sentinel> end;
 
 	public:
-		iterator(block_cache_lazy<Node> curr, block_cache<Sentinel> end) : curr(curr), end(end) {}
+		iterator(const block_cache<Sentinel>& root, block_cache_lazy<Node> curr) : root(root), curr(curr) {}
 
-		bool operator==(const iterator& other) const { return curr.ref() == other.curr.ref(); }
+		bool operator==(const iterator& other) const { return curr == other.curr; }
 
 		const T& operator*() {
-			if (curr.ref() == end.ref()) {
+			if (curr == root) {
 				throw std::invalid_argument("cannot dereference end list iterator");
 			}
 			return curr.get().value;
 		}
 
 		iterator& operator++() {
-			if (curr.ref() == end.ref()) {
+			if (curr == root) {
 				throw std::invalid_argument("cannot increment end list iterator");
 			}
 			curr = curr.get().next;
@@ -60,8 +60,8 @@ public:
 		}
 
 		iterator& operator--() {
-			block<Node> prev = curr.ref() == end.ref() ? end.get().prev : curr.get().prev;
-			if (prev == end.ref()) {
+			block<Node> prev = curr == root ? root.get().prev : curr.get().prev;
+			if (prev == root) {
 				throw std::invalid_argument("cannot decrement begin list iterator");
 			}
 			curr = prev;
@@ -76,46 +76,46 @@ private:
 	block_cache<Sentinel> root;
 
 public:
-	bool empty() const { return root.get().prev == root.ref(); }
+	bool empty() const { return root.get().prev == root; }
 
-	iterator begin() const { return iterator(root.get().next, root); }
-	iterator end() const { return iterator(static_cast<block<Node>>(root.ref()), root); }
+	iterator begin() const { return iterator(root, root.get().next); }
+	iterator end() const { return iterator(root, static_cast<block<Node>>(root)); }
 
 public:
 	void clear() {
 		if (empty()) {
 			return;
 		}
-		root.set(Sentinel(root.ref(), root.ref()));
+		root.set(Sentinel(root, root));
 	}
 
 	template <class... Args>
 	iterator emplace_back(Args&&... args) {
 		return block_manager.transaction([&]() {
-			block_cache<Node> new_node(root.ref(), root.get().prev, std::forward<Args>(args)...);
+			block_cache<Node> new_node(std::in_place, root, root.get().prev, std::forward<Args>(args)...);
 			if (empty()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = new_node.ref(); });
+				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
 				block_cache<Node> back(root.get().prev);
-				back.update([&](Node& n) { n.next = new_node.ref(); });
-				root.update([&](Sentinel& r) { r.prev = new_node.ref(); });
+				back.update([&](Node& n) { n.next = new_node; });
+				root.update([&](Sentinel& r) { r.prev = new_node; });
 			}
-			return iterator(new_node, root);
+			return iterator(root, new_node);
 		});
 	}
 
 	template <class... Args>
 	iterator emplace_front(Args&&... args) {
 		return block_manager.transaction([&]() {
-			block_cache<Node> new_node(root.get().next, root.ref(), std::forward<Args>(args)...);
+			block_cache<Node> new_node(std::in_place, root.get().next, root, std::forward<Args>(args)...);
 			if (empty()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = new_node.ref(); });
+				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
 				block_cache<Node> front(root.get().next);
-				front.update([&](Node& n) { n.prev = new_node.ref(); });
-				root.update([&](Sentinel& r) { r.next = new_node.ref(); });
+				front.update([&](Node& n) { n.prev = new_node; });
+				root.update([&](Sentinel& r) { r.next = new_node; });
 			}
-			return iterator(new_node, root);
+			return iterator(root, new_node);
 		});
 	}
 
@@ -129,10 +129,10 @@ public:
 		}
 		return block_manager.transaction([&]() {
 			block_cache<Node> prev(pos.curr.get().prev);
-			block_cache<Node> new_node(pos.curr.ref(), prev.ref(), std::forward<Args>(args)...);
-			prev.update([&](Node& n) { n.next = new_node.ref(); });
-			pos.curr.update([&](Node& n) { n.prev = new_node.ref(); });
-			return iterator(new_node, root);
+			block_cache<Node> new_node(std::in_place, pos.curr, prev, std::forward<Args>(args)...);
+			prev.update([&](Node& n) { n.next = new_node; });
+			pos.curr.update([&](Node& n) { n.prev = new_node; });
+			return iterator(root, new_node);
 		});
 	}
 
@@ -142,12 +142,12 @@ public:
 		}
 		block_manager.transaction([&]() {
 			block_cache<Node> back(root.get().prev);
-			if (back.get().prev == root.ref()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = root.ref(); });
+			if (back.get().prev == root) {
+				root.update([&](Sentinel& r) { r.next = r.prev = root; });
 			} else {
 				block_cache<Node> prev(back.get().prev);
-				prev.update([&](Node& n) { n.next = root.ref(); });
-				root.update([&](Sentinel& r) { r.prev = prev.ref(); });
+				prev.update([&](Node& n) { n.next = root; });
+				root.update([&](Sentinel& r) { r.prev = prev; });
 			}
 		});
 	}
@@ -158,12 +158,12 @@ public:
 		}
 		block_manager.transaction([&]() {
 			block_cache<Node> front(root.get().next);
-			if (front.get().next == root.ref()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = root.ref(); });
+			if (front.get().next == root) {
+				root.update([&](Sentinel& r) { r.next = r.prev = root; });
 			} else {
 				block_cache<Node> next(front.get().next);
-				next.update([&](Node& n) { n.prev = root.ref(); });
-				root.update([&](Sentinel& r) { r.next = next.ref(); });
+				next.update([&](Node& n) { n.prev = root; });
+				root.update([&](Sentinel& r) { r.next = next; });
 			}
 		});
 	}
@@ -172,7 +172,7 @@ public:
 		if (pos == end()) {
 			throw std::invalid_argument("list erase iterator outside range");
 		}
-		if (pos.curr.get().next == root.ref()) {
+		if (pos.curr.get().next == root) {
 			return pop_back();
 		}
 		if (pos == begin()) {
@@ -181,8 +181,8 @@ public:
 		return block_manager.transaction([&]() {
 			block_cache<Node> prev(pos.curr.get().prev);
 			block_cache<Node> next(pos.curr.get().next);
-			prev.update([&](Node& n) { n.next = next.ref(); });
-			next.update([&](Node& n) { n.prev = prev.ref(); });
+			prev.update([&](Node& n) { n.next = next; });
+			next.update([&](Node& n) { n.prev = prev; });
 		});
 	}
 };
