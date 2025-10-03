@@ -37,22 +37,22 @@ public:
 
 	private:
 		block_cache_lazy<Node> curr;
-		const block<Node> end;
+		const block_cache<Sentinel> end;
 
 	public:
-		iterator(block<Node> curr, block<Node> end) : curr(curr), end(end) {}
+		iterator(block_cache_lazy<Node> curr, block_cache<Sentinel> end) : curr(curr), end(end) {}
 
 		bool operator==(const iterator& other) const { return curr.ref() == other.curr.ref(); }
 
 		const T& operator*() {
-			if (curr.ref() == end) {
+			if (curr.ref() == end.ref()) {
 				throw std::invalid_argument("cannot dereference end list iterator");
 			}
 			return curr.get().value;
 		}
 
 		iterator& operator++() {
-			if (curr.ref() == end) {
+			if (curr.ref() == end.ref()) {
 				throw std::invalid_argument("cannot increment end list iterator");
 			}
 			curr = curr.get().next;
@@ -60,8 +60,8 @@ public:
 		}
 
 		iterator& operator--() {
-			block<Node> prev = curr.ref() == end ? block<Sentinel>(curr.ref()).read().prev : curr.get().prev;
-			if (prev == end) {
+			block<Node> prev = curr.ref() == end.ref() ? end.get().prev : curr.get().prev;
+			if (prev == end.ref()) {
 				throw std::invalid_argument("cannot decrement begin list iterator");
 			}
 			curr = prev;
@@ -78,8 +78,8 @@ private:
 public:
 	bool empty() const { return root.get().prev == root.ref(); }
 
-	iterator begin() const { return iterator(root.get().next, root.ref()); }
-	iterator end() const { return iterator(root.ref(), root.ref()); }
+	iterator begin() const { return iterator(root.get().next, root); }
+	iterator end() const { return iterator(static_cast<block<Node>>(root.ref()), root); }
 
 public:
 	void clear() {
@@ -92,32 +92,30 @@ public:
 	template <class... Args>
 	iterator emplace_back(Args&&... args) {
 		return block_manager.transaction([&]() {
-			block<Node> new_node;
-			new_node.write(Node(root.ref(), root.get().prev, std::forward<Args>(args)...));
+			block_cache<Node> new_node(root.ref(), root.get().prev, std::forward<Args>(args)...);
 			if (empty()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
+				root.update([&](Sentinel& r) { r.next = r.prev = new_node.ref(); });
 			} else {
 				block_cache<Node> back(root.get().prev);
-				back.update([&](Node& n) { n.next = new_node; });
-				root.update([&](Sentinel& r) { r.prev = new_node; });
+				back.update([&](Node& n) { n.next = new_node.ref(); });
+				root.update([&](Sentinel& r) { r.prev = new_node.ref(); });
 			}
-			return iterator(new_node, root.ref());
+			return iterator(new_node, root);
 		});
 	}
 
 	template <class... Args>
 	iterator emplace_front(Args&&... args) {
 		return block_manager.transaction([&]() {
-			block<Node> new_node;
-			new_node.write(Node(root.get().next, root.ref(), std::forward<Args>(args)...));
+			block_cache<Node> new_node(root.get().next, root.ref(), std::forward<Args>(args)...);
 			if (empty()) {
-				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
+				root.update([&](Sentinel& r) { r.next = r.prev = new_node.ref(); });
 			} else {
 				block_cache<Node> front(root.get().next);
-				front.update([&](Node& n) { n.prev = new_node; });
-				root.update([&](Sentinel& r) { r.next = new_node; });
+				front.update([&](Node& n) { n.prev = new_node.ref(); });
+				root.update([&](Sentinel& r) { r.next = new_node.ref(); });
 			}
-			return iterator(new_node, root.ref());
+			return iterator(new_node, root);
 		});
 	}
 
@@ -131,11 +129,10 @@ public:
 		}
 		return block_manager.transaction([&]() {
 			block_cache<Node> prev(pos.curr.get().prev);
-			block<Node> new_node;
-			new_node.write(Node(pos.curr.ref(), prev.ref(), std::forward<Args>(args)...));
-			prev.update([&](Node& n) { n.next = new_node; });
-			pos.curr.update([&](Node& n) { n.prev = new_node; });
-			return iterator(new_node, root.ref());
+			block_cache<Node> new_node(pos.curr.ref(), prev.ref(), std::forward<Args>(args)...);
+			prev.update([&](Node& n) { n.next = new_node.ref(); });
+			pos.curr.update([&](Node& n) { n.prev = new_node.ref(); });
+			return iterator(new_node, root);
 		});
 	}
 

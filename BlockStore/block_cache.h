@@ -36,20 +36,28 @@ protected:
 };
 
 
+template <class T>
+class block_cache_lazy;
+
+
 template<class T>
 class block_cache : private block_cache_shared_map {
+private:
+	friend class block_cache_lazy<T>;
 private:
 	block<T> r;
 	std::reference_wrapper<T> v;
 public:
-	block_cache(block<T> ref, auto init) : r(ref), v(lookup(ref, std::move(init))) {}
+	block_cache(block<T> ref, auto init) : r(ref), v(lookup(r, std::move(init))) {}
 	block_cache(block<T> ref) : block_cache(ref, []() { return T(); }) {}
+	template<class... Args> requires std::constructible_from<T, Args...>
+	block_cache(Args&&... args) : r(block<T>()), v(block_cache_shared_map::set<T>(r, std::forward<Args>(args)...)) { r.write(v); }
 public:
 	block<T> ref() const { return r; }
 	const T& get() const { return v; }
-	void set(T&& object) { r.write(v.get() = std::move(object)); }
-	void set(const T& object) { r.write(v.get() = object); }
-	void update(auto f) { f(v); r.write(v); }
+	const T& set(T&& object) { r.write(v.get() = std::move(object)); return v; }
+	const T& set(const T& object) { r.write(v.get() = object); return v; }
+	const T& update(auto f) { f(v); r.write(v); return v; }
 };
 
 
@@ -60,14 +68,15 @@ private:
 	mutable T* v;
 public:
 	block_cache_lazy(block<T> ref) : r(ref), v(nullptr) {}
+	block_cache_lazy(block_cache<T> cache) : r(cache.r), v(&cache.v.get()) {}
 public:
 	block<T> ref() const { return r; }
 	const T& get(auto init) const { if (v == nullptr) { v = &lookup(r, std::move(init)); } return *v; }
 	const T& get() const { return get([]() { return T(); }); }
 	template<class... Args>
-	void set(Args&&... args) { v = &block_cache_shared_map::set(r, std::forward<Args>(args)...); r.write(*v); }
-	void update(auto f, auto init) { f(const_cast<T&>(get(std::move(init)))); r.write(*v); }
-	void update(auto f) { update(std::move(f), []() { return T(); }); }
+	const T& set(Args&&... args) { v = &block_cache_shared_map::set<T>(r, std::forward<Args>(args)...); r.write(*v); return *v; }
+	const T& update(auto f, auto init) { f(const_cast<T&>(get(std::move(init)))); r.write(*v); return *v; }
+	const T& update(auto f) { return update(std::move(f), []() { return T(); }); }
 };
 
 
