@@ -11,6 +11,8 @@ using CppSerialize::layout_traits;
 using CppSerialize::layout_trivial;
 using CppSerialize::layout_dynamic;
 
+constexpr size_t block_size_limit = 4096; // byte
+
 
 template<class T>
 struct BlockSize {
@@ -19,13 +21,12 @@ public:
 private:
 	const T& object;
 public:
-	constexpr static size_t limit = 4096; // byte
-	static_assert(layout_dynamic<T> || layout_traits<T>::size() <= limit, "block size exceeds the limit");
+	static_assert(layout_dynamic<T> || layout_traits<T>::size() <= block_size_limit, "block size exceeds the limit");
 public:
 	constexpr std::pair<size_t, size_t> Get() const {
 		size_t size = 0; size_t ref_size = 0;
 		access(size, ref_size, object);
-		if (size > limit) { throw std::invalid_argument("block size exceeds the limit"); }
+		if (size > block_size_limit) { throw std::invalid_argument("block size exceeds the limit"); }
 		return std::make_pair(size, ref_size);
 	}
 private:
