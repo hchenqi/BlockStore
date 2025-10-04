@@ -9,7 +9,6 @@ BEGIN_NAMESPACE(BlockStore)
 
 using CppSerialize::layout_traits;
 using CppSerialize::layout_trivial;
-using CppSerialize::layout_static;
 using CppSerialize::layout_dynamic;
 
 
@@ -30,11 +29,11 @@ public:
 		return std::make_pair(size, ref_size);
 	}
 private:
-	constexpr static void access(size_t& size, size_t& ref_size, const layout_static auto& object) {
+	constexpr static void access(size_t& size, size_t& ref_size, const layout_trivial auto& object) {
 		size += layout_traits<std::remove_cvref_t<decltype(object)>>::size();
 	}
-	constexpr static void access(size_t& size, size_t& ref_size, const block_ref&) {
-		size += layout_traits<block_ref>::size();
+	constexpr static void access(size_t& size, size_t& ref_size, const block_ref& object) {
+		access(size, ref_size, static_cast<index_t>(object));
 		ref_size++;
 	}
 	constexpr static void access(size_t& size, size_t& ref_size, const auto& object) {

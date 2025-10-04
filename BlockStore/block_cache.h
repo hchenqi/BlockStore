@@ -9,7 +9,7 @@
 BEGIN_NAMESPACE(BlockStore)
 
 
-struct block_cache_shared_map {
+struct block_cache_shared : private ObjectCount<block_cache_shared>  {
 private:
 	static std::unordered_map<index_t, std::any> map;
 protected:
@@ -27,12 +27,22 @@ protected:
 protected:
 	template<class T>
 	static T& lookup(const block<T>& ref, auto init) {
-		if (block_cache_shared_map::has(ref)) {
-			return block_cache_shared_map::get<T>(ref);
+		if (block_cache_shared::has(ref)) {
+			return block_cache_shared::get<T>(ref);
 		} else {
-			return block_cache_shared_map::set<T>(ref, ref.read(std::move(init)));
+			return block_cache_shared::set<T>(ref, ref.read(std::move(init)));
 		}
 	}
+public:
+	static void clear() {
+		if (GetCount() > 0) {
+			throw std::invalid_argument("cannot clear block cache with active instances");
+		}
+		map.clear();
+	}
+
+	// transaction copy back on exception
+	//static auto transaction(auto f) {}
 };
 
 
@@ -40,36 +50,37 @@ template <class T>
 class block_cache_lazy;
 
 template<class T>
-class block_cache : public block<T>, private block_cache_shared_map {
+class block_cache : public block<T>, private block_cache_shared {
 private:
 	friend class block_cache_lazy<T>;
 private:
 	std::reference_wrapper<const T> v;
 public:
-	block_cache(const block<T>& ref, auto init) : block<T>(ref), v(block_cache_shared_map::lookup(*this, std::move(init))) {}
+	block_cache(const block<T>& ref, auto init) : block<T>(ref), v(block_cache_shared::lookup(*this, std::move(init))) {}
 	block_cache(const block<T>& ref) : block_cache(ref, []() { return T(); }) {}
 	template<class... Args> requires std::constructible_from<T, Args...>
 	block_cache(std::in_place_t, Args&&... args) : block<T>(), v(set(std::forward<Args>(args)...)) {}
 public:
 	const T& get() const { return v; }
 	template<class... Args>
-	const T& set(Args&&... args) { v = block_cache_shared_map::set<T>(*this, std::forward<Args>(args)...); block<T>::write(v); return v; }
+	const T& set(Args&&... args) { v = block_cache_shared::set<T>(*this, std::forward<Args>(args)...); block<T>::write(v); return v; }
 	const T& update(auto f) { f(const_cast<T&>(get())); block<T>::write(v); return v; }
 };
 
 
 template<class T>
-class block_cache_lazy : public block<T>, private block_cache_shared_map {
+class block_cache_lazy : public block<T>, private block_cache_shared {
 private:
 	mutable const T* v;
 public:
+	block_cache_lazy() : block<T>(), v(nullptr) {}
 	block_cache_lazy(const block<T>& ref) : block<T>(ref), v(nullptr) {}
 	block_cache_lazy(const block_cache<T>& cache) : block<T>(cache), v(&cache.v.get()) {}
 public:
-	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared_map::lookup(*this, std::move(init)); } return *v; }
+	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared::lookup(*this, std::move(init)); } return *v; }
 	const T& get() const { return get([]() { return T(); }); }
 	template<class... Args>
-	const T& set(Args&&... args) { v = &block_cache_shared_map::set<T>(*this, std::forward<Args>(args)...); block<T>::write(*v); return *v; }
+	const T& set(Args&&... args) { v = &block_cache_shared::set<T>(*this, std::forward<Args>(args)...); block<T>::write(*v); return *v; }
 	const T& update(auto f, auto init) { f(const_cast<T&>(get(std::move(init)))); block<T>::write(*v); return *v; }
 	const T& update(auto f) { return update(std::move(f), []() { return T(); }); }
 };

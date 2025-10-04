@@ -7,8 +7,8 @@
 using namespace BlockStore;
 
 
-void print_list(auto list) {
-	for (auto i : list) {
+void print(auto container) {
+	for (auto i : container) {
 		std::cout << i << ' ';
 	}
 	std::cout << std::endl;
@@ -25,7 +25,7 @@ int main() {
 
 	try {
 		List<std::string> list(block_manager.get_root());
-		print_list(list);
+		print(list);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
 		return 0;
@@ -33,58 +33,64 @@ int main() {
 
 	{
 		List<std::string> list(block_manager.get_root());
+		print(list);
+
 		block_manager.transaction([&]() {
 			for (int i = 0; i < 10; ++i) {
 				list.emplace_back(std::to_string(i));
 			}
 		});
-		print_list(list);
+		print(list);
 
 		list.emplace(++++list.begin(), "1.5");
-		print_list(list);
+		print(list);
 
 		list.emplace(list.begin(), "-1");
-		print_list(list);
+		print(list);
 
 		list.emplace(list.end(), "10");
-		print_list(list);
+		print(list);
 
 		list.pop_front();
-		print_list(list);
+		print(list);
 
 		list.pop_back();
-		print_list(list);
+		print(list);
 
 		list.erase(list.begin());
-		print_list(list);
+		print(list);
 
 		list.erase(--list.end());
-		print_list(list);
+		print(list);
 
 		list.erase(++list.begin());
-		print_list(list);
+		print(list);
 
 		list.erase(------list.end());
-		print_list(list);
+		print(list);
 
 		block_manager.collect_garbage();
 
-		print_list(list);
+		print(list);
 
 		block_manager.transaction([&]() {
 			for (int i = 0; i < 5; ++i) {
 				list.emplace_front(std::to_string(-i));
 			}
 		});
-		print_list(list);
+		print(list);
 	}
 
+	block_cache_shared::clear();
+	block_manager.collect_garbage();
 	block_manager.collect_garbage();
 
 	{
 		List<std::string> list(block_manager.get_root());
+		print(list);
+
 		list.clear();
-		print_list(list);
+		print(list);
 	}
 
 	block_manager.collect_garbage();

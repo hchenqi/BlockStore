@@ -4,7 +4,9 @@
 BEGIN_NAMESPACE(BlockStore)
 
 
-std::unordered_map<index_t, std::any> block_cache_shared_map::map;
+size_t block_cache_shared::ObjectCount::count;
+
+std::unordered_map<index_t, std::any> block_cache_shared::map;
 
 
 END_NAMESPACE(BlockStore)
