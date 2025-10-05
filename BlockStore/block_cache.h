@@ -9,10 +9,10 @@
 BEGIN_NAMESPACE(BlockStore)
 
 
-struct block_cache_shared : private ObjectCount<block_cache_shared>  {
+struct block_cache_shared : private ObjectCount<block_cache_shared> {
 private:
 	static std::unordered_map<index_t, std::any> map;
-protected:
+private:
 	static bool has(const block_ref& ref) {
 		return map.contains(ref);
 	}
@@ -20,17 +20,30 @@ protected:
 	static T& get(const block_ref& ref) {
 		return std::any_cast<T&>(map.at(ref));
 	}
-	template<class T, class... Args>
-	static T& set(const block_ref& ref, Args&&... args) {
-		return map[ref].emplace<T>(std::forward<Args>(args)...);
+	template<class T>
+	static T& set(const block_ref& ref, auto&&... args) {
+		return map[ref].emplace<T>(std::forward<decltype(args)>(args)...);
 	}
 protected:
 	template<class T>
-	static T& lookup(const block<T>& ref, auto init) {
+	static T& lookup_read(const block<T>& ref, auto init) {
 		if (block_cache_shared::has(ref)) {
 			return block_cache_shared::get<T>(ref);
 		} else {
 			return block_cache_shared::set<T>(ref, ref.read(std::move(init)));
+		}
+	}
+	template<class T>
+	static T& lookup_write(block<T>& ref, auto&&... args) {
+		if (block_cache_shared::has(ref)) {
+			auto& object = block_cache_shared::get<T>(ref);
+			object = T(std::forward<decltype(args)>(args)...);
+			ref.write(object);
+			return object;
+		} else {
+			auto& object = block_cache_shared::set<T>(ref, std::forward<decltype(args)>(args)...);
+			ref.write(object);
+			return object;
 		}
 	}
 public:
@@ -56,15 +69,13 @@ private:
 private:
 	std::reference_wrapper<const T> v;
 public:
-	block_cache(const block<T>& ref, auto init) : block<T>(ref), v(block_cache_shared::lookup(*this, std::move(init))) {}
+	block_cache(const block<T>& ref, auto init) : block<T>(ref), v(block_cache_shared::lookup_read(*this, std::move(init))) {}
 	block_cache(const block<T>& ref) : block_cache(ref, []() { return T(); }) {}
-	template<class... Args> requires std::constructible_from<T, Args...>
-	block_cache(std::in_place_t, Args&&... args) : block<T>(), v(set(std::forward<Args>(args)...)) {}
+	block_cache(std::in_place_t, auto&&... args) : block<T>(), v(block_cache_shared::lookup_write(*this, std::forward<decltype(args)>(args)...)) {}
 public:
 	const T& get() const { return v; }
-	template<class... Args>
-	const T& set(Args&&... args) { v = block_cache_shared::set<T>(*this, std::forward<Args>(args)...); block<T>::write(v); return v; }
-	const T& update(auto f) { f(const_cast<T&>(get())); block<T>::write(v); return v; }
+	const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
+	const T& update(auto f) { block<T> ref = *this; auto& object = const_cast<T&>(get()); f(object); ref.write(object); return object; }
 };
 
 
@@ -75,13 +86,12 @@ private:
 public:
 	block_cache_lazy() : block<T>(), v(nullptr) {}
 	block_cache_lazy(const block<T>& ref) : block<T>(ref), v(nullptr) {}
-	block_cache_lazy(const block_cache<T>& cache) : block<T>(cache), v(&cache.v.get()) {}
+	block_cache_lazy(const block_cache<T>& cache) : block<T>(cache), v(&cache.get()) {}
 public:
-	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared::lookup(*this, std::move(init)); } return *v; }
+	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared::lookup_read(*this, std::move(init)); } return *v; }
 	const T& get() const { return get([]() { return T(); }); }
-	template<class... Args>
-	const T& set(Args&&... args) { v = &block_cache_shared::set<T>(*this, std::forward<Args>(args)...); block<T>::write(*v); return *v; }
-	const T& update(auto f, auto init) { f(const_cast<T&>(get(std::move(init)))); block<T>::write(*v); return *v; }
+	const T& set(auto&&... args) { v = &block_cache_shared::lookup_write(*this, std::forward<decltype(args)>(args)...); return *v; }
+	const T& update(auto f, auto init) { block<T> ref = *this; auto& object = const_cast<T&>(get(std::move(init))); f(object); ref.write(object); return object; }
 	const T& update(auto f) { return update(std::move(f), []() { return T(); }); }
 };
 

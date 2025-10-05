@@ -15,8 +15,7 @@ private:
 
 		Node() = default;
 
-		template <class... Args>
-		Node(block<Node> next, block<Node> prev, Args&&... args) : next(next), prev(prev), value(std::forward<Args>(args)...) {}
+		Node(block<Node> next, block<Node> prev, auto&&... args) : next(next), prev(prev), value(std::forward<decltype(args)>(args)...) {}
 	};
 	friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
 
@@ -89,10 +88,9 @@ public:
 		root.set(Sentinel(root, root));
 	}
 
-	template <class... Args>
-	iterator emplace_back(Args&&... args) {
+	iterator emplace_back(auto&&... args) {
 		return block_manager.transaction([&]() {
-			block_cache<Node> new_node(std::in_place, root, root.get().prev, std::forward<Args>(args)...);
+			block_cache<Node> new_node(std::in_place, root, root.get().prev, std::forward<decltype(args)>(args)...);
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
@@ -104,10 +102,9 @@ public:
 		});
 	}
 
-	template <class... Args>
-	iterator emplace_front(Args&&... args) {
+	iterator emplace_front(auto&&... args) {
 		return block_manager.transaction([&]() {
-			block_cache<Node> new_node(std::in_place, root.get().next, root, std::forward<Args>(args)...);
+			block_cache<Node> new_node(std::in_place, root.get().next, root, std::forward<decltype(args)>(args)...);
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
@@ -119,17 +116,16 @@ public:
 		});
 	}
 
-	template <class... Args>
-	iterator emplace(iterator pos, Args&&... args) {
+	iterator emplace(iterator pos, auto&&... args) {
 		if (pos == end()) {
-			return emplace_back(std::forward<Args>(args)...);
+			return emplace_back(std::forward<decltype(args)>(args)...);
 		}
 		if (pos == begin()) {
-			return emplace_front(std::forward<Args>(args)...);
+			return emplace_front(std::forward<decltype(args)>(args)...);
 		}
 		return block_manager.transaction([&]() {
 			block_cache<Node> prev(pos.curr.get().prev);
-			block_cache<Node> new_node(std::in_place, pos.curr, prev, std::forward<Args>(args)...);
+			block_cache<Node> new_node(std::in_place, pos.curr, prev, std::forward<decltype(args)>(args)...);
 			prev.update([&](Node& n) { n.next = new_node; });
 			pos.curr.update([&](Node& n) { n.prev = new_node; });
 			return iterator(root, new_node);
