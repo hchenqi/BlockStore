@@ -31,15 +31,22 @@ private:
 
 public:
 	class iterator {
+	public:
+		using iterator_category = std::bidirectional_iterator_tag;
+		using value_type = T;
+		using difference_type = std::ptrdiff_t;
+		using pointer = T*;
+		using reference = T&;
+
 	private:
 		friend class List;
 
 	private:
-		const block_cache<Sentinel>& root;
+		block_cache<Sentinel> root;
 		block_cache_lazy<Node> curr;
 
 	public:
-		iterator(const block_cache<Sentinel>& root, block_cache_lazy<Node> curr) : root(root), curr(curr) {}
+		iterator(block_cache<Sentinel> root, block_cache_lazy<Node> curr) : root(root), curr(curr) {}
 
 		bool operator==(const iterator& other) const { return curr == other.curr; }
 
@@ -79,6 +86,23 @@ public:
 
 	iterator begin() const { return iterator(root, root.get().next); }
 	iterator end() const { return iterator(root, static_cast<block<Node>>(root)); }
+
+	std::reverse_iterator<iterator> rbegin() const { return std::reverse_iterator<iterator>(end()); }
+	std::reverse_iterator<iterator> rend() const { return std::reverse_iterator<iterator>(begin()); }
+
+	const T& front() const {
+		if (empty()) {
+			throw std::invalid_argument("list is empty");
+		}
+		return *begin();
+	}
+
+	const T& back() const {
+		if (empty()) {
+			throw std::invalid_argument("list is empty");
+		}
+		return *--end();
+	}
 
 public:
 	void clear() {
@@ -132,39 +156,43 @@ public:
 		});
 	}
 
-	void pop_back() {
+	iterator pop_back() {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
-		block_manager.transaction([&]() {
+		return block_manager.transaction([&]() {
 			block_cache<Node> back(root.get().prev);
 			if (back.get().prev == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
+				return end();
 			} else {
 				block_cache<Node> prev(back.get().prev);
 				prev.update([&](Node& n) { n.next = root; });
 				root.update([&](Sentinel& r) { r.prev = prev; });
+				return iterator(root, prev);
 			}
 		});
 	}
 
-	void pop_front() {
+	iterator pop_front() {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
-		block_manager.transaction([&]() {
+		return block_manager.transaction([&]() {
 			block_cache<Node> front(root.get().next);
 			if (front.get().next == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
+				return end();
 			} else {
 				block_cache<Node> next(front.get().next);
 				next.update([&](Node& n) { n.prev = root; });
 				root.update([&](Sentinel& r) { r.next = next; });
+				return iterator(root, next);
 			}
 		});
 	}
 
-	void erase(iterator pos) {
+	iterator erase(iterator pos) {
 		if (pos == end()) {
 			throw std::invalid_argument("list erase iterator outside range");
 		}
@@ -179,6 +207,7 @@ public:
 			block_cache<Node> next(pos.curr.get().next);
 			prev.update([&](Node& n) { n.next = next; });
 			next.update([&](Node& n) { n.prev = prev; });
+			return iterator(root, next);
 		});
 	}
 };

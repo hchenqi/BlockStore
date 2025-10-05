@@ -1,18 +1,10 @@
+#include "common.h"
 #include "BlockStore/List.h"
 #include "CppSerialize/stl/string.h"
-
-#include <iostream>
 
 
 using namespace BlockStore;
 
-
-void print(auto container) {
-	for (auto i : container) {
-		std::cout << i << ' ';
-	}
-	std::cout << std::endl;
-}
 
 int main() {
 	try {
@@ -57,16 +49,23 @@ int main() {
 		list.pop_back();
 		print(list);
 
-		list.erase(list.begin());
+		auto it = list.begin();
+		it = list.erase(it);
 		print(list);
 
-		list.erase(--list.end());
+		it = list.erase(--list.end());
 		print(list);
 
-		list.erase(++list.begin());
+		it = list.erase(++list.begin());
 		print(list);
 
-		list.erase(------list.end());
+		it = list.erase(it);
+		print(list);
+
+		it = list.erase(------list.end());
+		print(list);
+
+		it = list.erase(it);
 		print(list);
 
 		block_manager.collect_garbage();

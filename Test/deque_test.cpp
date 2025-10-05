@@ -1,17 +1,9 @@
+#include "common.h"
 #include "BlockStore/Deque.h"
-
-#include <iostream>
 
 
 using namespace BlockStore;
 
-
-void print(auto container) {
-	for (auto i : container) {
-		std::cout << i << ' ';
-	}
-	std::cout << std::endl;
-}
 
 int main() {
 	try {
@@ -33,19 +25,15 @@ int main() {
 	{
 		Deque<uint64> deque(block_manager.get_root());
 		block_manager.transaction([&]() {
-			for (int i = 0; i < 1024; ++i) {
+			for (int i = 0; i < 10; ++i) {
 				deque.emplace_back(i);
 			}
 		});
 		print(deque);
 
-		deque.pop_front();
-		print(deque);
-
-		deque.pop_front();
-		print(deque);
-
-		deque.pop_front();
+		for (int i = 8; i > 0; --i) {
+			deque.pop_front();
+		}
 		print(deque);
 
 		deque.pop_back();
@@ -53,10 +41,22 @@ int main() {
 
 		block_manager.transaction([&]() {
 			for (int i = 0; i < 10; ++i) {
-				deque.emplace_front(-i);
+				deque.emplace_front(i);
 			}
 		});
 		print(deque);
+
+		auto it = deque.begin() += 10;
+		for (int i = 7; i > 0; --i) {
+			it = deque.emplace(it, i);
+			print(deque);
+		}
+
+		it -= 5;
+		for (int i = 5; i > 0; --i) {
+			it = deque.erase(it);
+			print(deque);
+		}
 
 		deque.clear();
 		print(deque);
