@@ -26,25 +26,31 @@ private:
 	}
 protected:
 	template<class T>
-	static T& lookup_read(const block<T>& ref, auto init) {
-		if (block_cache_shared::has(ref)) {
-			return block_cache_shared::get<T>(ref);
+	static const T& lookup_read(const block<T>& ref, auto init) {
+		if (has(ref)) {
+			return get<T>(ref);
 		} else {
-			return block_cache_shared::set<T>(ref, ref.read(std::move(init)));
+			return set<T>(ref, ref.read(std::move(init)));
 		}
 	}
 	template<class T>
-	static T& lookup_write(block<T>& ref, auto&&... args) {
-		if (block_cache_shared::has(ref)) {
-			auto& object = block_cache_shared::get<T>(ref);
+	static const T& lookup_write(block<T>& ref, auto&&... args) {
+		if (has(ref)) {
+			auto& object = get<T>(ref);
 			object = T(std::forward<decltype(args)>(args)...);
 			ref.write(object);
 			return object;
 		} else {
-			auto& object = block_cache_shared::set<T>(ref, std::forward<decltype(args)>(args)...);
+			auto& object = set<T>(ref, std::forward<decltype(args)>(args)...);
 			ref.write(object);
 			return object;
 		}
+	}
+	template<class T>
+	static const T& update(block<T>& ref, const T& object, auto f) {
+		f(const_cast<T&>(object));
+		ref.write(object);
+		return object;
 	}
 public:
 	static void clear() {
@@ -75,7 +81,7 @@ public:
 public:
 	const T& get() const { return v; }
 	const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
-	const T& update(auto f) { block<T> ref = *this; auto& object = const_cast<T&>(get()); f(object); ref.write(object); return object; }
+	const T& update(auto f) { return block_cache_shared::update(*this, get(), std::move(f)); }
 };
 
 
@@ -91,7 +97,7 @@ public:
 	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared::lookup_read(*this, std::move(init)); } return *v; }
 	const T& get() const { return get([]() { return T(); }); }
 	const T& set(auto&&... args) { v = &block_cache_shared::lookup_write(*this, std::forward<decltype(args)>(args)...); return *v; }
-	const T& update(auto f, auto init) { block<T> ref = *this; auto& object = const_cast<T&>(get(std::move(init))); f(object); ref.write(object); return object; }
+	const T& update(auto f, auto init) { return block_cache_shared::update(*this, get(std::move(init)), std::move(f)); }
 	const T& update(auto f) { return update(std::move(f), []() { return T(); }); }
 };
 
