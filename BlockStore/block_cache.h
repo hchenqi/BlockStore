@@ -78,6 +78,9 @@ public:
 	block_cache(const block<T>& ref, auto init) : block<T>(ref), v(block_cache_shared::lookup_read(*this, std::move(init))) {}
 	block_cache(const block<T>& ref) : block_cache(ref, []() { return T(); }) {}
 	block_cache(std::in_place_t, auto&&... args) : block<T>(), v(block_cache_shared::lookup_write(*this, std::forward<decltype(args)>(args)...)) {}
+private:
+	block<T>::read;
+	block<T>::write;
 public:
 	const T& get() const { return v; }
 	const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
@@ -93,6 +96,9 @@ public:
 	block_cache_lazy() : block<T>(), v(nullptr) {}
 	block_cache_lazy(const block<T>& ref) : block<T>(ref), v(nullptr) {}
 	block_cache_lazy(const block_cache<T>& cache) : block<T>(cache), v(&cache.get()) {}
+private:
+	block<T>::read;
+	block<T>::write;
 public:
 	const T& get(auto init) const { if (v == nullptr) { v = &block_cache_shared::lookup_read(*this, std::move(init)); } return *v; }
 	const T& get() const { return get([]() { return T(); }); }

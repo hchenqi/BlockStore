@@ -1,4 +1,6 @@
 #include "block_manager.h"
+#include "block_cache.h"
+
 #include "CppSerialize/serializer.h"
 #include "SQLite3Helper/sqlite3_helper.h"
 
@@ -10,13 +12,16 @@
 
 BEGIN_NAMESPACE(BlockStore)
 
-
-size_t block_ref::ObjectCount::count;
-
 struct block_ref_access {
 	static block_ref construct(index_t index) { return block_ref(index); }
 	static size_t count_object() { return block_ref::GetCount(); }
 };
+
+
+size_t block_ref::ObjectCount::count;
+
+size_t block_cache_shared::ObjectCount::count;
+std::unordered_map<index_t, std::any> block_cache_shared::map;
 
 
 BEGIN_NAMESPACE(Anonymous)

@@ -10,7 +10,7 @@ template<class T>
 class block : public block_ref {
 public:
 	block() : block_ref() {}
-	block(block_ref ref) : block_ref(ref) {}
+	block(const block_ref& ref) : block_ref(ref) {}
 public:
 	T read(auto init) const {
 		if (auto data = block_ref::read(); !data.empty()) {
