@@ -14,23 +14,27 @@ private:
 		T value;
 
 		Node() = default;
+		Node(const block<Node>& next, const block<Node>& prev, auto&&... args) : next(next), prev(prev), value(std::forward<decltype(args)>(args)...) {}
 
-		Node(block<Node> next, block<Node> prev, auto&&... args) : next(next), prev(prev), value(std::forward<decltype(args)>(args)...) {}
+		friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
 	};
-	friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
 
 	struct Sentinel {
 		block<Node> next;
 		block<Node> prev;
 
 		Sentinel() = default;
-		Sentinel(block_ref initial) : next(initial), prev(initial) {}
-		Sentinel(block<Node> next, block<Node> prev) : next(next), prev(prev) {}
+		Sentinel(const block_ref& root) : next(root), prev(root) {}
+		Sentinel(const block<Node>& next, const block<Node>& prev) : next(next), prev(prev) {}
+
+		friend constexpr auto layout(layout_type<Sentinel>) { return declare(&Sentinel::next, &Sentinel::prev); }
 	};
-	friend constexpr auto layout(layout_type<Sentinel>) { return declare(&Sentinel::next, &Sentinel::prev); }
 
 public:
 	class iterator {
+	private:
+		friend class List;
+
 	public:
 		using iterator_category = std::bidirectional_iterator_tag;
 		using value_type = T;
@@ -39,15 +43,13 @@ public:
 		using reference = T&;
 
 	private:
-		friend class List;
-
-	private:
 		block_cache<Sentinel> root;
 		block_cache_lazy<Node> curr;
 
-	public:
-		iterator(block_cache<Sentinel> root, block_cache_lazy<Node> curr) : root(root), curr(curr) {}
+	private:
+		iterator(const block_cache<Sentinel>& root, const block<Node>& curr) : root(root), curr(curr) {}
 
+	public:
 		bool operator==(const iterator& other) const { return curr == other.curr; }
 
 		const T& operator*() {
@@ -82,10 +84,10 @@ private:
 	block_cache<Sentinel> root;
 
 public:
-	bool empty() const { return root.get().prev == root; }
+	bool empty() const { return root.get().next == root; }
 
 	iterator begin() const { return iterator(root, root.get().next); }
-	iterator end() const { return iterator(root, static_cast<block<Node>>(root)); }
+	iterator end() const { return iterator(root, root); }
 
 	std::reverse_iterator<iterator> rbegin() const { return std::reverse_iterator<iterator>(end()); }
 	std::reverse_iterator<iterator> rend() const { return std::reverse_iterator<iterator>(begin()); }
@@ -109,7 +111,7 @@ public:
 		if (empty()) {
 			return;
 		}
-		root.set(Sentinel(root, root));
+		root.set(Sentinel(root));
 	}
 
 	iterator emplace_back(auto&&... args) {

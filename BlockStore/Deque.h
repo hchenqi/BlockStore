@@ -24,13 +24,17 @@ private:
 		std::vector<T> data;
 
 		Node() = default;
-		Node(block_ref initial) : next(initial), prev(initial), data() {}
-		Node(block<Node> next, block<Node> prev, std::vector<T> data) : next(next), prev(prev), data(std::move(data)) {}
+		Node(const block_ref& root) : next(root), prev(root), data() {}
+		Node(const block<Node>& next, const block<Node>& prev, std::vector<T> data) : next(next), prev(prev), data(std::move(data)) {}
+
+		friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::data); }
 	};
-	friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::data); }
 
 public:
 	class iterator {
+	private:
+		friend class Deque;
+
 	public:
 		using iterator_category = std::bidirectional_iterator_tag;
 		using value_type = T;
@@ -39,16 +43,14 @@ public:
 		using reference = T&;
 
 	private:
-		friend class Deque;
-
-	private:
 		const Deque* deque;
 		block_cache_lazy<Node> curr;
 		size_t curr_index;
 
-	public:
+	private:
 		iterator(const Deque& deque, block_cache_lazy<Node> curr, size_t curr_index) : deque(&deque), curr(curr), curr_index(curr_index) {}
 
+	public:
 		bool operator==(const iterator& other) const { return curr == other.curr && curr_index == other.curr_index; }
 
 		const T& operator*() {
@@ -155,7 +157,7 @@ public:
 		if (empty()) {
 			return;
 		}
-		head.set(Node(head, head, std::vector<T>()));
+		head.set(Node(head));
 		tail = head;
 	}
 
