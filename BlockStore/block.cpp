@@ -6,8 +6,6 @@
 
 #include <cassert>
 #include <memory>
-#include <unordered_set>
-#include <vector>
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -21,7 +19,6 @@ struct block_ref_access {
 size_t block_ref::ObjectCount::count;
 
 size_t block_cache_shared::ObjectCount::count;
-std::unordered_map<index_t, std::any> block_cache_shared::map;
 
 
 BEGIN_NAMESPACE(Anonymous)
@@ -121,7 +118,7 @@ public:
 				allocation_list.reserve(allocation_batch_size);
 				Transaction([&]() {
 					while (allocation_list.size() < allocation_batch_size) {
-						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_phase == GcPhase::Sweeping? !metadata.gc_mark : metadata.gc_mark));
+						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_phase == GcPhase::Sweeping ? !metadata.gc_mark : metadata.gc_mark));
 					}
 				});
 			} catch (...) {
@@ -245,6 +242,65 @@ DB& db() {
 }
 
 
+class BlockCacheMap : public TransactionHook {
+private:
+	using move_assign_fn = void(*)(std::any&, std::any&);
+	using write_fn = void(*)(const block_ref&, const std::any&);
+	using map_value_tuple = std::tuple<std::any, move_assign_fn, write_fn>;
+
+private:
+	std::unordered_map<index_t, map_value_tuple> map;
+	std::unordered_map<index_t, std::any> map_copy;
+
+public:
+	bool has(index_t index) {
+		return map.contains(index);
+	}
+	const std::any& get(index_t index) {
+		return std::get<std::any>(map.at(index));
+	}
+	const std::any& set(index_t index, map_value_tuple value) {
+		return std::get<std::any>(map.emplace(index, std::move(value)).first->second);
+	}
+	std::any& update(index_t index) {
+		if (!map_copy.contains(index)) {
+			map_copy.emplace(index, get(index));
+		}
+		return std::get<std::any>(map.at(index));
+	}
+public:
+	void clear() {
+		assert(map_copy.empty());
+		map.clear();
+	}
+
+private:
+	virtual void AfterBeginTransaction() override {
+		if (!map_copy.empty()) {
+			throw std::invalid_argument("block cache operations not wrapped in a transaction");
+		}
+	}
+	virtual void BeforeCommit() override {
+		for (const auto& [index, _] : map_copy) {
+			const auto& [object, _, write] = map[index];
+			write(block_ref_access::construct(index), object);
+		}
+	}
+	virtual void AfterCommit() override {
+		map_copy.clear();
+	}
+	virtual void AfterRollback() override {
+		for (auto& [index, value] : map_copy) {
+			auto& [object, assign, _] = map[index];
+			assign(object, value);
+		}
+		map_copy.clear();
+	}
+};
+
+BlockCacheMap block_cache_map;
+
+
 END_NAMESPACE(Anonymous)
 
 
@@ -253,6 +309,7 @@ void BlockManager::open_file(const char file[]) {
 		throw std::invalid_argument("open_file can only be called once");
 	}
 	pdb = std::make_unique<DB>(file);
+	pdb->SetTransactionHook(block_cache_map);
 }
 
 block_ref BlockManager::get_root() { return db().get_root(); }
@@ -277,6 +334,22 @@ void block_ref::deserialize_end() { deserializing = false; }
 std::vector<byte> block_ref::read() const { return db().read(index); }
 
 void block_ref::write(const std::vector<byte>& data, const std::vector<index_t>& ref) { return db().write(index, data, ref); }
+
+
+bool block_cache_shared::has(index_t index) { return block_cache_map.has(index); }
+
+const std::any& block_cache_shared::get(index_t index) { return block_cache_map.get(index); }
+
+const std::any& block_cache_shared::set(index_t index, map_value value) { return block_cache_map.set(index, std::move(value)); }
+
+std::any& block_cache_shared::update(index_t index) { return block_cache_map.update(index); }
+
+void block_cache_shared::clear() {
+	if (GetCount() > 0) {
+		throw std::invalid_argument("cannot clear block cache with active instances");
+	}
+	return block_cache_map.clear();
+}
 
 
 END_NAMESPACE(BlockStore)

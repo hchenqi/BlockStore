@@ -11,19 +11,37 @@ BEGIN_NAMESPACE(BlockStore)
 
 struct block_cache_shared : private ObjectCount<block_cache_shared> {
 private:
-	static std::unordered_map<index_t, std::any> map;
+	using move_assign_fn = void(*)(std::any&, std::any&);
+	using write_fn = void(*)(const block_ref&, const std::any&);
+	using map_value = std::tuple<std::any, move_assign_fn, write_fn>;
+
 private:
-	static bool has(const block_ref& ref) {
-		return map.contains(ref);
+	static bool has(index_t index);
+	static const std::any& get(index_t index);
+	static const std::any& set(index_t index, map_value value);
+	static std::any& update(index_t index);
+	static const std::any& update(index_t index, map_value value);
+public:
+	static void clear();
+
+private:
+	template<class T>
+	static const T& get(const block_ref& ref) {
+		return std::any_cast<const T&>(get(ref));
 	}
 	template<class T>
-	static T& get(const block_ref& ref) {
-		return std::any_cast<T&>(map.at(ref));
+	static T& update(const block_ref& ref) {
+		return std::any_cast<T&>(update(ref));
 	}
 	template<class T>
-	static T& set(const block_ref& ref, auto&&... args) {
-		return map[ref].emplace<T>(std::forward<decltype(args)>(args)...);
+	static const T& set(const block_ref& ref, auto&&... args) {
+		return std::any_cast<const T&>(set(ref, std::make_tuple(
+			std::make_any<T>(std::forward<decltype(args)>(args)...),
+			[](std::any& object, std::any& other) { std::any_cast<T&>(object) = std::move(std::any_cast<T&>(other)); },
+			[](const block_ref& ref, const std::any& object) { block<T>(ref).write(std::any_cast<const T&>(object)); }
+		)));
 	}
+
 protected:
 	template<class T>
 	static const T& lookup_read(const block<T>& ref, auto init) {
@@ -36,32 +54,18 @@ protected:
 	template<class T>
 	static const T& lookup_write(block<T>& ref, auto&&... args) {
 		if (has(ref)) {
-			auto& object = get<T>(ref);
-			object = T(std::forward<decltype(args)>(args)...);
-			ref.write(object);
-			return object;
+			return update<T>(ref) = T(std::forward<decltype(args)>(args)...);
 		} else {
-			auto& object = set<T>(ref, std::forward<decltype(args)>(args)...);
-			ref.write(object);
-			return object;
+			return set<T>(ref, std::forward<decltype(args)>(args)...);
 		}
 	}
+#error when lookup_write fails, cache should revert to old value or default value, but default is not to be initialized
 	template<class T>
-	static const T& update(block<T>& ref, const T& object, auto f) {
-		f(const_cast<T&>(object));
-		ref.write(object);
+	static const T& update(block<T>& ref, auto f) {
+		auto& object = update<T>(ref);
+		f(object);
 		return object;
 	}
-public:
-	static void clear() {
-		if (GetCount() > 0) {
-			throw std::invalid_argument("cannot clear block cache with active instances");
-		}
-		map.clear();
-	}
-
-	// transaction copy back on exception
-	//static auto transaction(auto f) {}
 };
 
 
