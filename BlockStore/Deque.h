@@ -123,7 +123,7 @@ public:
 	};
 
 public:
-	Deque(block<Node> root) : head(root, [&]() { return Node(root); }), tail(head.get().prev) {}
+	Deque(block<Node> root) : head(root, [&] { return Node(root); }), tail(head.get().prev) {}
 
 private:
 	block_cache<Node> head;
@@ -157,8 +157,10 @@ public:
 		if (empty()) {
 			return;
 		}
-		head.set(Node(head));
-		tail = head;
+		block_manager.transaction([&] {
+			head.set(Node(head));
+			tail = head;
+		});
 	}
 
 	iterator emplace_back(auto&&... args) {
@@ -172,11 +174,13 @@ public:
 	iterator emplace(iterator pos, auto&&... args) {
 		block_cache<Node> curr = pos.curr;
 		if (curr.get().data.size() < block_limit) {
-			curr.update([&](Node& n) { n.data.emplace(n.data.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
+			block_manager.transaction([&] {
+				curr.update([&](Node& n) { n.data.emplace(n.data.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
+			});
 		} else {
 			if (pos.curr_index == curr.get().data.size()) {
 				assert(pos == end());
-				tail = block_manager.transaction([&]() {
+				tail = block_manager.transaction([&] {
 					block_cache<Node> new_node(std::in_place, head, tail, [&] { std::vector<T> data; data.emplace_back(std::forward<decltype(args)>(args)...); return data; }());
 					if (head == tail) {
 						head.update([&](Node& n) { n.next = n.prev = new_node; });
@@ -188,7 +192,7 @@ public:
 					return new_node;
 				});
 			} else {
-				tail = block_manager.transaction([&]() {
+				tail = block_manager.transaction([&] {
 					block_cache<Node> next = curr.get().next;
 					block_cache_lazy<Node> new_node;
 					if (curr != next) {
@@ -246,7 +250,9 @@ public:
 			throw std::invalid_argument("deque erase iterator outside range");
 		}
 		if (pos.curr.get().data.size() > 1 || head == tail) {
-			pos.curr.update([&](Node& n) { n.data.erase(n.data.begin() + pos.curr_index); });
+			block_manager.transaction([&] {
+				pos.curr.update([&](Node& n) { n.data.erase(n.data.begin() + pos.curr_index); });
+			});
 			if (pos.curr_index < pos.curr.get().data.size() || pos.curr == tail) {
 				return pos;
 			} else {
@@ -254,7 +260,7 @@ public:
 			}
 		} else {
 			if (pos.curr == tail) {
-				tail = block_manager.transaction([&]() {
+				tail = block_manager.transaction([&] {
 					block_cache<Node> prev(tail.get().prev);
 					if (prev == head) {
 						head.update([&](Node& n) { n.next = n.prev = head; });
@@ -266,7 +272,7 @@ public:
 				});
 				return end();
 			} else if (pos.curr == head) {
-				tail = block_manager.transaction([&]() {
+				tail = block_manager.transaction([&] {
 					block_cache<Node> next(head.get().next);
 					block_cache<Node> nnext(next.get().next);
 					if (head == nnext) {
@@ -280,7 +286,7 @@ public:
 				});
 				return begin();
 			} else {
-				return block_manager.transaction([&]() {
+				return block_manager.transaction([&] {
 					block_cache<Node> prev(pos.curr.get().prev);
 					block_cache<Node> next(pos.curr.get().next);
 					assert(prev != next);

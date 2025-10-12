@@ -6,6 +6,8 @@
 
 #include <cassert>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 
 
 BEGIN_NAMESPACE(BlockStore)
@@ -244,58 +246,48 @@ DB& db() {
 
 class BlockCacheMap : public TransactionHook {
 private:
-	using move_assign_fn = void(*)(std::any&, std::any&);
 	using write_fn = void(*)(const block_ref&, const std::any&);
-	using map_value_tuple = std::tuple<std::any, move_assign_fn, write_fn>;
+	using map_value = std::tuple<std::any, write_fn>;
 
 private:
-	std::unordered_map<index_t, map_value_tuple> map;
-	std::unordered_map<index_t, std::any> map_copy;
+	std::unordered_map<index_t, map_value> map;
+	std::unordered_set<index_t> dirty;
 
 public:
 	bool has(index_t index) {
 		return map.contains(index);
 	}
-	const std::any& get(index_t index) {
+	std::any& get(index_t index) {
 		return std::get<std::any>(map.at(index));
 	}
-	const std::any& set(index_t index, map_value_tuple value) {
-		return std::get<std::any>(map.emplace(index, std::move(value)).first->second);
+	std::any& set(index_t index, map_value value) {
+		return std::get<std::any>(map.insert_or_assign(index, std::move(value)).first->second);
 	}
-	std::any& update(index_t index) {
-		if (!map_copy.contains(index)) {
-			map_copy.emplace(index, get(index));
-		}
-		return std::get<std::any>(map.at(index));
+	void mark(index_t index) {
+		dirty.emplace(index);
 	}
 public:
 	void clear() {
-		assert(map_copy.empty());
+		assert(dirty.empty());
 		map.clear();
 	}
 
 private:
 	virtual void AfterBeginTransaction() override {
-		if (!map_copy.empty()) {
-			throw std::invalid_argument("block cache operations not wrapped in a transaction");
+		if (!dirty.empty()) {
+			throw std::invalid_argument("block cache operations not committed before transaction");
 		}
 	}
 	virtual void BeforeCommit() override {
-		for (const auto& [index, _] : map_copy) {
-			const auto& [object, _, write] = map[index];
+		for (index_t index : dirty) {
+			const auto& [object, write] = map.at(index);
 			write(block_ref_access::construct(index), object);
 		}
 	}
 	virtual void AfterCommit() override {
-		map_copy.clear();
+		dirty.clear();
 	}
-	virtual void AfterRollback() override {
-		for (auto& [index, value] : map_copy) {
-			auto& [object, assign, _] = map[index];
-			assign(object, value);
-		}
-		map_copy.clear();
-	}
+	virtual void AfterRollback() override {}
 };
 
 BlockCacheMap block_cache_map;
@@ -338,11 +330,11 @@ void block_ref::write(const std::vector<byte>& data, const std::vector<index_t>&
 
 bool block_cache_shared::has(index_t index) { return block_cache_map.has(index); }
 
-const std::any& block_cache_shared::get(index_t index) { return block_cache_map.get(index); }
+std::any& block_cache_shared::get(index_t index) { return block_cache_map.get(index); }
 
-const std::any& block_cache_shared::set(index_t index, map_value value) { return block_cache_map.set(index, std::move(value)); }
+std::any& block_cache_shared::set(index_t index, map_value value) { return block_cache_map.set(index, std::move(value)); }
 
-std::any& block_cache_shared::update(index_t index) { return block_cache_map.update(index); }
+void block_cache_shared::mark(index_t index) { return block_cache_map.mark(index); }
 
 void block_cache_shared::clear() {
 	if (GetCount() > 0) {

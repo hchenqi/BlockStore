@@ -64,7 +64,7 @@ public:
 	};
 
 public:
-	ForwardList(block<Sentinel> root) : root(root, [&]() { return Sentinel(root); }) {}
+	ForwardList(block<Sentinel> root) : root(root, [&] { return Sentinel(root); }) {}
 
 private:
 	block_cache<Sentinel> root;
@@ -88,11 +88,13 @@ public:
 		if (empty()) {
 			return;
 		}
-		root.set(Sentinel(root));
+		block_manager.transaction([&] {
+			root.set(Sentinel(root));
+		});
 	}
 
 	iterator emplace_front(auto&&... args) {
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> new_node(std::in_place, root.get().next, std::forward<decltype(args)>(args)...);
 			root.update([&](Sentinel& r) { r.next = new_node; });
 			return iterator(root, new_node);
@@ -103,7 +105,7 @@ public:
 		if (pos == before_begin()) {
 			return emplace_front(std::forward<decltype(args)>(args)...);
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> new_node(std::in_place, pos.curr.get().next, std::forward<decltype(args)>(args)...);
 			pos.curr.update([&](Node& n) { n.next = new_node; });
 			return iterator(root, new_node);
@@ -114,7 +116,7 @@ public:
 		if (empty()) {
 			throw std::invalid_argument("forward_list is empty");
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> next(root.get().next);
 			root.update([&](Sentinel& r) { r.next = next.get().next; });
 			return iterator(root, next.get().next);
@@ -128,7 +130,7 @@ public:
 		if (pos.curr.get().next == root) {
 			throw std::invalid_argument("forward_list erase iterator outside range");
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> next(pos.curr.get().next);
 			pos.curr.update([&](Node& n) { n.next = next.get().next; });
 			return iterator(root, next.get().next);

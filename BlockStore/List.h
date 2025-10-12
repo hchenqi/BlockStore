@@ -78,7 +78,7 @@ public:
 	};
 
 public:
-	List(block<Sentinel> root) : root(root, [&]() { return Sentinel(root); }) {}
+	List(block<Sentinel> root) : root(root, [&] { return Sentinel(root); }) {}
 
 private:
 	block_cache<Sentinel> root;
@@ -111,11 +111,13 @@ public:
 		if (empty()) {
 			return;
 		}
-		root.set(Sentinel(root));
+		block_manager.transaction([&] {
+			root.set(Sentinel(root));
+		});
 	}
 
 	iterator emplace_back(auto&&... args) {
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> new_node(std::in_place, root, root.get().prev, std::forward<decltype(args)>(args)...);
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
@@ -129,7 +131,7 @@ public:
 	}
 
 	iterator emplace_front(auto&&... args) {
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> new_node(std::in_place, root.get().next, root, std::forward<decltype(args)>(args)...);
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
@@ -149,7 +151,7 @@ public:
 		if (pos == begin()) {
 			return emplace_front(std::forward<decltype(args)>(args)...);
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> prev(pos.curr.get().prev);
 			block_cache<Node> new_node(std::in_place, pos.curr, prev, std::forward<decltype(args)>(args)...);
 			prev.update([&](Node& n) { n.next = new_node; });
@@ -162,7 +164,7 @@ public:
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> back(root.get().prev);
 			if (back.get().prev == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
@@ -180,7 +182,7 @@ public:
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> front(root.get().next);
 			if (front.get().next == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
@@ -204,7 +206,7 @@ public:
 		if (pos == begin()) {
 			return pop_front();
 		}
-		return block_manager.transaction([&]() {
+		return block_manager.transaction([&] {
 			block_cache<Node> prev(pos.curr.get().prev);
 			block_cache<Node> next(pos.curr.get().next);
 			prev.update([&](Node& n) { n.next = next; });
