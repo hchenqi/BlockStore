@@ -1,6 +1,6 @@
 #pragma once
 
-#include "block.h"
+#include "block_manager.h"
 
 #include <any>
 
@@ -43,22 +43,26 @@ protected:
 	}
 	template<class T>
 	static const T& lookup_write(block<T>& ref, auto&&... args) {
-		if (has(ref)) {
-			auto& object = get<T>(ref);
-			object = T(std::forward<decltype(args)>(args)...);
-			mark(ref);
-			return object;
-		} else {
-			auto& object = set<T>(ref, std::forward<decltype(args)>(args)...);
-			mark(ref);
-			return object;
-		}
+		return block_manager.transaction([&]() -> decltype(auto) {
+			if (has(ref)) {
+				auto& object = get<T>(ref);
+				object = T(std::forward<decltype(args)>(args)...);
+				mark(ref);
+				return object;
+			} else {
+				auto& object = set<T>(ref, std::forward<decltype(args)>(args)...);
+				mark(ref);
+				return object;
+			}
+		});
 	}
 	template<class T>
 	static const T& update(block<T>& ref, const T& object, auto f) {
-		f(const_cast<T&>(object));
-		mark(ref);
-		return object;
+		return block_manager.transaction([&]() -> decltype(auto) {
+			f(const_cast<T&>(object));
+			mark(ref);
+			return object;
+		});
 	}
 };
 

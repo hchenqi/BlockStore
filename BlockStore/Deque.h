@@ -169,11 +169,11 @@ public:
 		if (pos == end()) {
 			return emplace_back(std::forward<decltype(args)>(args)...);
 		}
-		return block_manager.transaction([&] {
-			if (pos.list_iterator()->size() < block_limit) {
-				(*pos.list_iterator()).update([&](auto& vector) { vector.emplace(vector.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
-				return pos;
-			} else {
+		if (pos.list_iterator()->size() < block_limit) {
+			(*pos.list_iterator()).update([&](auto& vector) { vector.emplace(vector.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
+			return pos;
+		} else {
+			return block_manager.transaction([&] {
 				if (pos.curr_index <= block_limit / 2) {
 					auto prev = List::emplace(pos);
 					if (pos.curr_index == 0) {
@@ -199,54 +199,48 @@ public:
 					}
 					return iterator(next, 0);
 				}
-			}
-		});
+			});
+		}
 	}
 
 	iterator pop_back() {
 		if (empty()) {
 			throw std::invalid_argument("deque is empty");
 		}
-		return block_manager.transaction([&] {
-			if (auto back = List::back(); back->size() > 1) {
-				back.update([](auto& vector) { vector.pop_back(); });
-			} else {
-				List::pop_back();
-			}
-			return end();
-		});
+		if (auto back = List::back(); back->size() > 1) {
+			back.update([](auto& vector) { vector.pop_back(); });
+		} else {
+			List::pop_back();
+		}
+		return end();
 	}
 
 	iterator pop_front() {
 		if (empty()) {
 			throw std::invalid_argument("deque is empty");
 		}
-		return block_manager.transaction([&] {
-			if (auto front = List::front(); front->size() > 1) {
-				front.update([](auto& vector) { vector.erase(vector.begin()); });
-			} else {
-				List::pop_front();
-			}
-			return begin();
-		});
+		if (auto front = List::front(); front->size() > 1) {
+			front.update([](auto& vector) { vector.erase(vector.begin()); });
+		} else {
+			List::pop_front();
+		}
+		return begin();
 	}
 
 	iterator erase(iterator pos) {
 		if (pos == end()) {
 			throw std::invalid_argument("deque erase iterator outside range");
 		}
-		return block_manager.transaction([&] {
-			if (pos.list_iterator()->size() > 1) {
-				(*pos.list_iterator()).update([&](auto& vector) { vector.erase(vector.begin() + pos.curr_index); });
-				if (pos.curr_index < pos.list_iterator()->size()) {
-					return pos;
-				} else {
-					return iterator(std::next(pos.list_iterator()), 0);
-				}
+		if (pos.list_iterator()->size() > 1) {
+			(*pos.list_iterator()).update([&](auto& vector) { vector.erase(vector.begin() + pos.curr_index); });
+			if (pos.curr_index < pos.list_iterator()->size()) {
+				return pos;
 			} else {
-				return iterator(List::erase(pos), 0);
+				return iterator(std::next(pos.list_iterator()), 0);
 			}
-		});
+		} else {
+			return iterator(List::erase(pos), 0);
+		}
 	}
 };
 
