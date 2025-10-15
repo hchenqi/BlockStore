@@ -13,25 +13,38 @@ constexpr size_t deque_block_limit = deque_block_size_limit / layout_traits<T>::
 
 
 template<class T>
-class Deque {
+class Deque : private List<std::vector<T>> {
+private:
+	using List = List<std::vector<T>>;
+
 public:
 	static constexpr size_t block_limit = deque_block_limit<T>;
 
-private:
-	struct Node {
-		block<Node> next;
-		block<Node> prev;
-		std::vector<T> data;
+public:
+	class value_wrapper : private List::value_wrapper {
+	private:
+		friend class Deque;
 
-		Node() = default;
-		Node(const block_ref& root) : next(root), prev(root), data() {}
-		Node(const block<Node>& next, const block<Node>& prev, std::vector<T> data) : next(next), prev(prev), data(std::move(data)) {}
+	private:
+		size_t index;
 
-		friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::data); }
+	private:
+		value_wrapper(const List::value_wrapper& list_value_wrapper, size_t index) : List::value_wrapper(list_value_wrapper), index(index) {}
+
+	private:
+		List::value_wrapper& list_value_wrapper() { return *this; }
+		const List::value_wrapper& list_value_wrapper() const { return *this; }
+
+	public:
+		const T& get() const { return list_value_wrapper().get().at(index); }
+		const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
+		const T& update(auto f) { return list_value_wrapper().update([&](auto& vector) { f(vector.at(index)); }).at(index); }
+
+		operator const T& () const { return get(); }
+		const T* operator->() const { return &get(); }
 	};
 
-public:
-	class iterator {
+	class iterator : private List::iterator {
 	private:
 		friend class Deque;
 
@@ -43,32 +56,31 @@ public:
 		using reference = T&;
 
 	private:
-		const Deque* deque;
-		block_cache_lazy<Node> curr;
 		size_t curr_index;
 
 	private:
-		iterator(const Deque& deque, block_cache_lazy<Node> curr, size_t curr_index) : deque(&deque), curr(curr), curr_index(curr_index) {}
+		iterator(const List::iterator& list_iterator, size_t curr_index) : List::iterator(list_iterator), curr_index(curr_index) {}
+
+	private:
+		List::iterator& list_iterator() { return *this; }
+		const List::iterator& list_iterator() const { return *this; }
 
 	public:
-		bool operator==(const iterator& other) const { return curr == other.curr && curr_index == other.curr_index; }
+		bool operator==(const iterator& other) const { return list_iterator() == other && curr_index == other.curr_index; }
 
-		const T& operator*() {
-			if (curr_index == curr.get().data.size()) {
-				assert(curr == deque->tail);
-				throw std::invalid_argument("cannot dereference end list iterator");
-			}
-			return curr.get().data[curr_index];
+		value_wrapper operator*() {
+			return value_wrapper(*list_iterator(), curr_index);
+		}
+
+		const T* operator->() {
+			return (**this).operator->();
 		}
 
 		iterator& operator++() {
-			if (curr_index == curr.get().data.size()) {
-				assert(curr == deque->tail);
-				throw std::invalid_argument("cannot increment end list iterator");
-			}
+			assert(curr_index < list_iterator()->size());
 			curr_index++;
-			if (curr_index == curr.get().data.size() && curr != deque->tail) {
-				curr = curr.get().next;
+			if (curr_index == list_iterator()->size()) {
+				++list_iterator();
 				curr_index = 0;
 			}
 			return *this;
@@ -76,12 +88,9 @@ public:
 
 		iterator& operator+=(size_t offset) {
 			for (curr_index += offset;;) {
-				const size_t curr_size = curr.get().data.size();
+				const size_t curr_size = list_iterator()->size();
 				if (curr_index >= curr_size) {
-					if (curr == deque->tail) {
-						throw std::invalid_argument("cannot increment end list iterator");
-					}
-					curr = curr.get().next;
+					++list_iterator();
 					curr_index -= curr_size;
 				} else {
 					break;
@@ -92,11 +101,8 @@ public:
 
 		iterator& operator--() {
 			if (curr_index == 0) {
-				if (curr == deque->head) {
-					throw std::invalid_argument("cannot decrement begin list iterator");
-				}
-				curr = curr.get().prev;
-				curr_index = curr.get().data.size();
+				--list_iterator();
+				curr_index = list_iterator()->size();
 				assert(curr_index > 0);
 			}
 			curr_index--;
@@ -106,12 +112,9 @@ public:
 		iterator& operator-=(size_t offset) {
 			for (;;) {
 				if (curr_index < offset) {
-					if (curr == deque->head) {
-						throw std::invalid_argument("cannot increment end list iterator");
-					}
 					offset -= curr_index;
-					curr = curr.get().prev;
-					curr_index = curr.get().data.size();
+					--list_iterator();
+					curr_index = list_iterator()->size();
 					assert(curr_index > 0);
 				} else {
 					curr_index -= offset;
@@ -123,179 +126,127 @@ public:
 	};
 
 public:
-	Deque(block<Node> root) : head(root, [&] { return Node(root); }), tail(head.get().prev) {}
-
-private:
-	block_cache<Node> head;
-	block_cache<Node> tail;
+	Deque(const block_ref& root) : List(root) {}
 
 public:
-	bool empty() const { return head.get().data.empty(); }
+	using List::empty;
 
-	iterator begin() const { return iterator(*this, head, 0); }
-	iterator end() const { return iterator(*this, tail, tail.get().data.size()); }
+	iterator begin() const { return iterator(List::begin(), 0); }
+	iterator end() const { return iterator(List::end(), 0); }
 
 	std::reverse_iterator<iterator> rbegin() const { return std::reverse_iterator<iterator>(end()); }
 	std::reverse_iterator<iterator> rend() const { return std::reverse_iterator<iterator>(begin()); }
 
-	const T& front() const {
-		if (empty()) {
-			throw std::invalid_argument("deque is empty");
-		}
-		return *begin();
-	}
-
-	const T& back() const {
-		if (empty()) {
-			throw std::invalid_argument("deque is empty");
-		}
-		return *--end();
-	}
+	value_wrapper front() const { return value_wrapper(List::front(), 0); }
+	value_wrapper back() const { auto list_back = List::back(); return value_wrapper(list_back, list_back.get().size() - 1); }
 
 public:
-	void clear() {
-		if (empty()) {
-			return;
-		}
-		block_manager.transaction([&] {
-			head.set(Node(head));
-			tail = head;
+	using List::clear;
+
+	iterator emplace_back(auto&&... args) {
+		return block_manager.transaction([&] {
+			auto it = empty() ? List::emplace_back() : --List::end();
+			if (it->size() >= block_limit) {
+				it = List::emplace_back();
+			}
+			(*it).update([&](auto& vector) { vector.emplace_back(std::forward<decltype(args)>(args)...); });
+			return iterator(it, it->size() - 1);
 		});
 	}
 
-	iterator emplace_back(auto&&... args) {
-		return emplace(end(), std::forward<decltype(args)>(args)...);
-	}
-
 	iterator emplace_front(auto&&... args) {
-		return emplace(begin(), std::forward<decltype(args)>(args)...);
+		return block_manager.transaction([&] {
+			auto it = empty() ? List::emplace_front() : List::begin();
+			if (it->size() >= block_limit) {
+				it = List::emplace_front();
+			}
+			(*it).update([&](auto& vector) { vector.emplace(vector.begin(), std::forward<decltype(args)>(args)...); });
+			return iterator(it, 0);
+		});
 	}
 
 	iterator emplace(iterator pos, auto&&... args) {
-		block_cache<Node> curr = pos.curr;
-		if (curr.get().data.size() < block_limit) {
-			block_manager.transaction([&] {
-				curr.update([&](Node& n) { n.data.emplace(n.data.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
-			});
-		} else {
-			if (pos.curr_index == curr.get().data.size()) {
-				assert(pos == end());
-				tail = block_manager.transaction([&] {
-					block_cache<Node> new_node(std::in_place, head, tail, [&] { std::vector<T> data; data.emplace_back(std::forward<decltype(args)>(args)...); return data; }());
-					if (head == tail) {
-						head.update([&](Node& n) { n.next = n.prev = new_node; });
-					} else {
-						head.update([&](Node& n) { n.prev = new_node; });
-						tail.update([&](Node& n) { n.next = new_node; });
-					}
-					pos = iterator(*this, new_node, 0);
-					return new_node;
-				});
-			} else {
-				tail = block_manager.transaction([&] {
-					block_cache<Node> next = curr.get().next;
-					block_cache_lazy<Node> new_node;
-					if (curr != next) {
-						next.update([&](Node& n) { n.prev = new_node; });
-					}
-					new_node.set(next, curr, [&] {
-						std::vector<T> data;
-						curr.update([&](Node& n) {
-							n.next = new_node;
-							if (curr == next) {
-								n.prev = new_node;
-							}
-							if (pos.curr_index <= block_limit / 2) {
-								if (pos.curr_index == 0) {
-									data = std::move(n.data);
-								} else {
-									data.insert(data.end(), std::make_move_iterator(n.data.begin() + pos.curr_index), std::make_move_iterator(n.data.end()));
-									n.data.erase(n.data.begin() + pos.curr_index, n.data.end());
-								}
-								n.data.emplace_back(std::forward<decltype(args)>(args)...);
-							} else {
-								data.emplace_back(std::forward<decltype(args)>(args)...);
-								data.insert(data.end(), std::make_move_iterator(n.data.begin() + pos.curr_index), std::make_move_iterator(n.data.end()));
-								n.data.erase(n.data.begin() + pos.curr_index, n.data.end());
-								pos = iterator(*this, new_node, 0);
-							}
-						});
-						return data;
-					}());
-					return next == head ? static_cast<block_cache<Node>>(new_node) : tail;
-				});
-			}
+		if (pos == end()) {
+			return emplace_back(std::forward<decltype(args)>(args)...);
 		}
-		return pos;
+		return block_manager.transaction([&] {
+			if (pos.list_iterator()->size() < block_limit) {
+				(*pos.list_iterator()).update([&](auto& vector) { vector.emplace(vector.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
+				return pos;
+			} else {
+				if (pos.curr_index <= block_limit / 2) {
+					auto prev = List::emplace(pos);
+					if (pos.curr_index == 0) {
+						(*prev).update([&](auto& prev) { prev.emplace_back(std::forward<decltype(args)>(args)...); });
+					} else {
+						(*prev).update([&](auto& prev) { (*pos.list_iterator()).update([&](auto& curr) {
+							prev.insert(prev.end(), std::make_move_iterator(curr.begin()), std::make_move_iterator(curr.begin() + pos.curr_index));
+							prev.emplace_back(std::forward<decltype(args)>(args)...);
+							curr.erase(curr.begin(), curr.begin() + pos.curr_index);
+						}); });
+					}
+					return iterator(prev, pos.curr_index);
+				} else {
+					auto next = List::emplace(std::next(pos));
+					if (pos.curr_index == pos.list_iterator()->size()) {
+						(*next).update([&](auto& next) { next.emplace_back(std::forward<decltype(args)>(args)...); });
+					} else {
+						(*next).update([&](auto& next) { (*pos.list_iterator()).update([&](auto& curr) {
+							next.emplace_back(std::forward<decltype(args)>(args)...);
+							next.insert(next.end(), std::make_move_iterator(curr.begin() + pos.curr_index), std::make_move_iterator(curr.end()));
+							curr.erase(curr.begin() + pos.curr_index, curr.end());
+						}); });
+					}
+					return iterator(next, 0);
+				}
+			}
+		});
 	}
 
 	iterator pop_back() {
 		if (empty()) {
 			throw std::invalid_argument("deque is empty");
 		}
-		return erase(--end());
+		return block_manager.transaction([&] {
+			if (auto back = List::back(); back->size() > 1) {
+				back.update([](auto& vector) { vector.pop_back(); });
+			} else {
+				List::pop_back();
+			}
+			return end();
+		});
 	}
 
 	iterator pop_front() {
 		if (empty()) {
 			throw std::invalid_argument("deque is empty");
 		}
-		return erase(begin());
+		return block_manager.transaction([&] {
+			if (auto front = List::front(); front->size() > 1) {
+				front.update([](auto& vector) { vector.erase(vector.begin()); });
+			} else {
+				List::pop_front();
+			}
+			return begin();
+		});
 	}
 
 	iterator erase(iterator pos) {
-		if (pos.curr_index >= pos.curr.get().data.size()) {
-			assert(head == tail);
-			assert(pos.curr == head);
+		if (pos == end()) {
 			throw std::invalid_argument("deque erase iterator outside range");
 		}
-		if (pos.curr.get().data.size() > 1 || head == tail) {
-			block_manager.transaction([&] {
-				pos.curr.update([&](Node& n) { n.data.erase(n.data.begin() + pos.curr_index); });
-			});
-			if (pos.curr_index < pos.curr.get().data.size() || pos.curr == tail) {
-				return pos;
+		return block_manager.transaction([&] {
+			if (pos.list_iterator()->size() > 1) {
+				(*pos.list_iterator()).update([&](auto& vector) { vector.erase(vector.begin() + pos.curr_index); });
+				if (pos.curr_index < pos.list_iterator()->size()) {
+					return pos;
+				} else {
+					return iterator(std::next(pos.list_iterator()), 0);
+				}
 			} else {
-				return iterator(*this, pos.curr.get().next, 0);
+				return iterator(List::erase(pos), 0);
 			}
-		} else {
-			if (pos.curr == tail) {
-				tail = block_manager.transaction([&] {
-					block_cache<Node> prev(tail.get().prev);
-					if (prev == head) {
-						head.update([&](Node& n) { n.next = n.prev = head; });
-					} else {
-						prev.update([&](Node& n) { n.next = head; });
-						head.update([&](Node& n) { n.prev = prev; });
-					}
-					return prev;
-				});
-				return end();
-			} else if (pos.curr == head) {
-				tail = block_manager.transaction([&] {
-					block_cache<Node> next(head.get().next);
-					block_cache<Node> nnext(next.get().next);
-					if (head == nnext) {
-						head.update([&](Node& n) { n.next = n.prev = head; next.update([&](Node& nn) { std::swap(n.data, nn.data); }); });
-						return head;
-					} else {
-						head.update([&](Node& n) { n.next = nnext; next.update([&](Node& nn) { std::swap(n.data, nn.data); }); });
-						nnext.update([&](Node& n) { n.prev = head; });
-						return tail;
-					}
-				});
-				return begin();
-			} else {
-				return block_manager.transaction([&] {
-					block_cache<Node> prev(pos.curr.get().prev);
-					block_cache<Node> next(pos.curr.get().next);
-					assert(prev != next);
-					prev.update([&](Node& n) { n.next = next; });
-					next.update([&](Node& n) { n.prev = prev; });
-					return iterator(*this, next, 0);
-				});
-			}
-		}
+		});
 	}
 };
 

@@ -58,6 +58,9 @@ int main() {
 			print(deque);
 		}
 
+		(*it).update([](auto& v) { v = 0; });
+		print(deque);
+
 		deque.clear();
 		print(deque);
 	}

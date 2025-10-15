@@ -90,6 +90,11 @@ public:
 			return *this;
 		}
 
+		iterator& operator+=(size_t offset) {
+			while (offset--) { ++*this; };
+			return *this;
+		}
+
 		iterator& operator--() {
 			block<Node> prev = curr == root ? root.get().prev : curr.get().prev;
 			if (prev == root) {
@@ -98,10 +103,15 @@ public:
 			curr = prev;
 			return *this;
 		}
+
+		iterator& operator-=(size_t offset) {
+			while (offset--) { --*this; };
+			return *this;
+		}
 	};
 
 public:
-	List(block<Sentinel> root) : root(root, [&] { return Sentinel(root); }) {}
+	List(const block_ref& root) : root(root, [&] { return Sentinel(root); }) {}
 
 private:
 	block_cache<Sentinel> root;
@@ -191,13 +201,12 @@ public:
 			block_cache<Node> back(root.get().prev);
 			if (back.get().prev == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
-				return end();
 			} else {
 				block_cache<Node> prev(back.get().prev);
 				prev.update([&](Node& n) { n.next = root; });
 				root.update([&](Sentinel& r) { r.prev = prev; });
-				return iterator(root, prev);
 			}
+			return end();
 		});
 	}
 

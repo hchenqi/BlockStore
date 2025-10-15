@@ -87,7 +87,7 @@ public:
 	};
 
 public:
-	ForwardList(block<Sentinel> root) : root(root, [&] { return Sentinel(root); }) {}
+	ForwardList(const block_ref& root) : root(root, [&] { return Sentinel(root); }) {}
 
 private:
 	block_cache<Sentinel> root;
