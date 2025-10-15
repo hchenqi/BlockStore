@@ -29,6 +29,26 @@ private:
 	};
 
 public:
+	class value_wrapper {
+	private:
+		friend class ForwardList;
+
+	private:
+		block_cache<Node> node;
+
+	private:
+		value_wrapper(const block_cache<Node>& node) : node(node) {}
+
+	public:
+		const T& get() const { return node.get().value; }
+		const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
+		const T& update(auto f) { return node.update([&](Node& node) { f(node.value); }).value; }
+
+		operator const T& () const { return get(); }
+		const T* operator->() const { return &get(); }
+	};
+
+	
 	class iterator {
 	private:
 		friend class ForwardList;
@@ -50,11 +70,15 @@ public:
 	public:
 		bool operator==(const iterator& other) const { return curr == other.curr; }
 
-		const T& operator*() {
+		value_wrapper operator*() {
 			if (curr == root) {
 				throw std::invalid_argument("cannot dereference end forward_list iterator");
 			}
-			return curr.get().value;
+			return block_cache<Node>(static_cast<block<Node>>(curr));
+		}
+
+		const T* operator->() {
+			return (**this).operator->();
 		}
 
 		iterator& operator++() {
@@ -76,7 +100,7 @@ public:
 	iterator begin() const { return iterator(root, root.get().next); }
 	iterator end() const { return before_begin(); }
 
-	const T& front() const {
+	value_wrapper front() const {
 		if (empty()) {
 			throw std::invalid_argument("forward_list is empty");
 		}

@@ -27,7 +27,7 @@ int main() {
 		ForwardList<std::string> forward_list(block_manager.get_root());
 		print(forward_list);
 
-		block_manager.transaction([&]() {
+		block_manager.transaction([&] {
 			for (int i = 9; i >= 0; --i) {
 				forward_list.emplace_front(std::to_string(i));
 			}
@@ -50,6 +50,11 @@ int main() {
 		it = forward_list.erase_after(++forward_list.before_begin());
 		print(forward_list);
 
+		block_manager.transaction([&] {
+			(*++it).update([](auto& value) { value += ".5"; });
+		});
+		print(forward_list);
+
 		it = forward_list.erase_after(it);
 		print(forward_list);
 
@@ -60,7 +65,7 @@ int main() {
 
 		print(forward_list);
 
-		block_manager.transaction([&]() {
+		block_manager.transaction([&] {
 			for (int i = 0; i < 5; ++i) {
 				forward_list.emplace_front(std::to_string(-i));
 			}

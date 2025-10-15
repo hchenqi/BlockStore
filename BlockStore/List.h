@@ -31,6 +31,25 @@ private:
 	};
 
 public:
+	class value_wrapper {
+	private:
+		friend class List;
+
+	private:
+		block_cache<Node> node;
+
+	private:
+		value_wrapper(const block_cache<Node>& node) : node(node) {}
+
+	public:
+		const T& get() const { return node.get().value; }
+		const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
+		const T& update(auto f) { return node.update([&](Node& node) { f(node.value); }).value; }
+
+		operator const T& () const { return get(); }
+		const T* operator->() const { return &get(); }
+	};
+
 	class iterator {
 	private:
 		friend class List;
@@ -52,11 +71,15 @@ public:
 	public:
 		bool operator==(const iterator& other) const { return curr == other.curr; }
 
-		const T& operator*() {
+		value_wrapper operator*() {
 			if (curr == root) {
 				throw std::invalid_argument("cannot dereference end list iterator");
 			}
-			return curr.get().value;
+			return block_cache<Node>(static_cast<block<Node>>(curr));
+		}
+
+		const T* operator->() {
+			return (**this).operator->();
 		}
 
 		iterator& operator++() {
@@ -92,14 +115,14 @@ public:
 	std::reverse_iterator<iterator> rbegin() const { return std::reverse_iterator<iterator>(end()); }
 	std::reverse_iterator<iterator> rend() const { return std::reverse_iterator<iterator>(begin()); }
 
-	const T& front() const {
+	value_wrapper front() const {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}
 		return *begin();
 	}
 
-	const T& back() const {
+	value_wrapper back() const {
 		if (empty()) {
 			throw std::invalid_argument("list is empty");
 		}

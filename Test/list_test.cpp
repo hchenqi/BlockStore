@@ -27,7 +27,7 @@ int main() {
 		List<std::string> list(block_manager.get_root());
 		print(list);
 
-		block_manager.transaction([&]() {
+		block_manager.transaction([&] {
 			for (int i = 0; i < 10; ++i) {
 				list.emplace_back(std::to_string(i));
 			}
@@ -68,11 +68,16 @@ int main() {
 		it = list.erase(it);
 		print(list);
 
+		block_manager.transaction([&] {
+			(*--it).set("5.0");
+		});
+		print(list);
+
 		block_manager.collect_garbage();
 
 		print(list);
 
-		block_manager.transaction([&]() {
+		block_manager.transaction([&] {
 			for (int i = 0; i < 5; ++i) {
 				list.emplace_front(std::to_string(-i));
 			}

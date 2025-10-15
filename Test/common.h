@@ -22,13 +22,13 @@ reversion_wrapper<T> reverse(T& iterable) { return { iterable }; }
 
 inline void print(const auto& container) {
 	for (auto i : container) {
-		std::cout << i << ' ';
+		std::cout << i.get() << ' ';
 	}
 	std::cout << std::endl;
 
 	if constexpr (reversible<decltype(container)>) {
 		for (auto i : reverse(container)) {
-			std::cout << i << ' ';
+			std::cout << i.get() << ' ';
 		}
 		std::cout << std::endl;
 		std::cout << std::endl;
