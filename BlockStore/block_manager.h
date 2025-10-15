@@ -16,14 +16,14 @@ protected:
 	static void commit();
 	static void rollback();
 public:
-	static auto transaction(auto f) {
+	static decltype(auto) transaction(auto f) {
 		begin_transaction();
 		try {
 			if constexpr (std::is_void_v<std::invoke_result_t<decltype(f)>>) {
 				f();
 				commit();
 			} else {
-				auto res = f();
+				decltype(auto) res = f();
 				commit();
 				return res;
 			}

@@ -44,7 +44,7 @@ public:
 	public:
 		const T& get() const { return node.get().value; }
 		const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
-		const T& update(auto f) { return node.update([&](Node& node) { f(node.value); }).value; }
+		const T& update(auto f) { return block_manager.transaction([&]() -> const T& { return node.update([&](Node& node) { f(node.value); }).value; }); }
 
 		operator const T& () const { return get(); }
 		const T* operator->() const { return &get(); }

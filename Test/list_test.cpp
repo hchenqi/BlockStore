@@ -68,9 +68,7 @@ int main() {
 		it = list.erase(it);
 		print(list);
 
-		block_manager.transaction([&] {
-			(*--it).set("5.0");
-		});
+		(*--it).set("5.0");
 		print(list);
 
 		block_manager.collect_garbage();
