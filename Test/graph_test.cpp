@@ -24,6 +24,8 @@ struct Item {
 
 constexpr auto layout(layout_type<Item>) { return declare(&Item::text, &Item::list); }
 
+constexpr size_t max_list_size = (block_size_limit - sizeof(size_t) * 2) / sizeof(index_t);
+
 
 class Context {
 protected:
@@ -98,9 +100,11 @@ private:
 		}
 	}
 	void create_random_child() {
-		focus.update([&](Item& item) {
-			item.list.emplace_back();
-		});
+		if (focus.get().list.size() < max_list_size) {
+			focus.update([&](Item& item) {
+				item.list.emplace_back();
+			});
+		}
 	}
 	void open_random_child() {
 		if (!focus.get().list.empty()) {
@@ -125,6 +129,9 @@ private:
 	void paste_random() {
 		if (!clipboard.empty()) {
 			auto it = random_clipboard_index();
+			if (focus.get().list.size() + (clipboard.cend() - it) > max_list_size) {
+				it = clipboard.cend() - (max_list_size - focus.get().list.size());
+			}
 			focus.update([&](Item& item) { item.list.insert(item.list.end(), it, clipboard.cend()); });
 			clipboard.erase(it, clipboard.end());
 		}
@@ -151,10 +158,13 @@ int main() {
 	block_manager.open_file("graph_test.db");
 
 	std::string command;
-	std::atomic<bool> interrupt(false);
+	std::atomic<bool> interrupt(true);
 
 	std::thread input([&]() {
 		for (;;) {
+			while (interrupt) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
 			std::getline(std::cin, command);
 			interrupt = true;
 			if (command == "exit") {
@@ -167,19 +177,26 @@ int main() {
 		{
 			Test test(block_manager.get_root());
 			for (;;) {
+				interrupt = false;
 				while (!interrupt) {
 					test.random_operation();
-					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
-				interrupt = false;
 				test.print();
+
 				if (command == "gc" || command == "exit") {
 					break;
 				}
 			}
 		}
+
+		std::cout << "gc begin" << std::endl;
+
 		block_cache_shared::clear();
 		block_manager.collect_garbage();
+
+		std::cout << "gc end" << std::endl;
+
 		if (command == "exit") {
 			break;
 		}
