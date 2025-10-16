@@ -21,6 +21,8 @@ size_t block_ref::ObjectCount::count;
 
 size_t block_cache_shared::ObjectCount::count;
 
+BlockManager::GCCallback BlockManager::default_gc_callback;
+
 
 BEGIN_NAMESPACE(Anonymous)
 
@@ -32,20 +34,18 @@ class DB : public Database {
 private:
 	constexpr static uint64 schema_version = 2025'09'27'0;
 
-	enum GcPhase : unsigned char { Idle, Scanning, Sweeping };
+	using GCPhase = BlockManager::GCPhase;
+	using GCInfo = BlockManager::GCInfo;
 
 	struct Metadata {
-		uint64 version;
+		uint64 version = schema_version;
 		index_t root_index;
-		bool gc_mark;
-		GcPhase gc_phase;
-		uint64 block_count_last_gc;
-		uint64 block_count;
-		uint64 block_count_marked;
-		index_t max_index;
-		index_t gc_delete_index;
+		GCInfo gc;
 	};
+	static_assert(layout_trivial<Metadata>);
+	static_assert(sizeof(Metadata) == 64);
 
+private:
 	constexpr static uint64 table_count = 3;
 
 	Query select_count_TABLE = "select count(*) from SQLITE_MASTER";  // void -> count: uint64
@@ -83,18 +83,15 @@ public:
 				Execute(create_OBJECT);
 				Execute(create_SCAN);
 
-				metadata.version = schema_version;
-				metadata.gc_mark = false;
-				metadata.gc_phase = GcPhase::Idle;
-				metadata.block_count_last_gc = 0;
-				metadata.root_index = ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_mark);
+				metadata.root_index = ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc.mark);
 				Execute(insert_STATIC_data, Serialize(metadata).Get());
 			});
 			this->metadata = metadata;
 		} else {
 			metadata = Deserialize<Metadata>(ExecuteForOne<std::vector<byte>>(select_data_STATIC)).Get();
 			if (metadata.version != schema_version) {
-				throw std::runtime_error("metadata version doesn't match");
+				// upgrade
+				throw std::runtime_error("unsupported database version");
 			}
 		}
 	}
@@ -119,7 +116,7 @@ public:
 				allocation_list.reserve(allocation_batch_size);
 				Transaction([&]() {
 					while (allocation_list.size() < allocation_batch_size) {
-						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc_phase == GcPhase::Sweeping ? !metadata.gc_mark : metadata.gc_mark));
+						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc.phase == GCPhase::Sweeping ? !metadata.gc.mark : metadata.gc.mark));
 					}
 				});
 			} catch (...) {
@@ -137,12 +134,12 @@ public:
 	}
 	void write(index_t index, const std::vector<byte>& data, const std::vector<index_t>& ref) {
 		Transaction([&]() {
-			if (metadata.gc_phase != GcPhase::Scanning) {
+			if (metadata.gc.phase != GCPhase::Scanning) {
 				Execute(update_OBJECT_data_ref_id, data, ref, index);
 				assert(Changes() > 0);
 			} else {
 				bool gc = (bool)ExecuteForOne<uint64>(update_gc_OBJECT_data_ref_id, data, ref, index);
-				if (gc == !metadata.gc_mark) {
+				if (gc == !metadata.gc.mark) {
 					for (index_t id : ref) {
 						Execute(insert_SCAN_id, id);
 					}
@@ -156,79 +153,118 @@ private:
 	constexpr static uint64 gc_scan_changes_limit = 16 * 1024;
 	constexpr static uint64 gc_scan_batch_size = 256;
 	constexpr static uint64 gc_delete_batch_size = 256 * 1024;
+
 public:
-	void collect_garbage() {
+	const GCInfo& get_gc_info() {
+		GCInfo& info = metadata.gc;
+		if (info.phase == GCPhase::Idle) {
+			info.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
+			info.block_count_marked = 0;
+		}
+		return info;
+	}
+	void gc(BlockManager::GCCallback& callback) {
 		Metadata metadata = this->metadata;
 
-		switch (metadata.gc_phase) {
-		case GcPhase::Idle: goto idle;
-		case GcPhase::Scanning: goto scanning;
-		case GcPhase::Sweeping: goto sweeping;
+		switch (metadata.gc.phase) {
+		case GCPhase::Idle: goto idle;
+		case GCPhase::Scanning: goto scanning;
+		case GCPhase::Sweeping: goto sweeping;
 		}
 
 	idle:
 		Transaction([&]() {
 			Execute(insert_SCAN_id, metadata.root_index);
-			metadata.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
-			metadata.block_count_marked = 0;
-			metadata.gc_phase = GcPhase::Scanning;
+
+			metadata.gc.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
+			metadata.gc.block_count_marked = 0;
+
+			callback.Notify(metadata.gc);
+
+			metadata.gc.phase = GCPhase::Scanning;
 			ExecuteUpdateMetadata(metadata);
 		});
 		this->metadata = metadata;
 
 	scanning:
 		for (;;) {
+			if (callback.Interrupt(metadata.gc)) {
+				return;
+			}
+
 			bool finish = false;
+
 			Transaction([&]() {
 				uint64 changes = 0;
 				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_changes_limit; ++i) {
-					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) { finish = true; break; }
-					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(update_ref_OBJECT_gc, !metadata.gc_mark, gc_scan_batch_size, metadata.gc_mark);
+					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) {
+						finish = true;
+						break;
+					}
+					std::vector<std::vector<index_t>> data_list = ExecuteForMultiple<std::vector<index_t>>(update_ref_OBJECT_gc, !metadata.gc.mark, gc_scan_batch_size, metadata.gc.mark);
 					changes += Changes();
 					Execute(delete_SCAN_limit, gc_scan_batch_size);
 					for (auto& data : data_list) { for (index_t id : data) { Execute(insert_SCAN_id, id); } }
 				}
-				metadata.block_count_marked += changes;
+				metadata.gc.block_count_marked += changes;
+
 				if (finish) {
+					callback.Notify(metadata.gc);
+
 					if (block_ref_access::count_object() > 0) {
 						return;
 					}
+
 					allocation_list.clear();
-					metadata.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
-					metadata.gc_delete_index = 0;
-					metadata.gc_phase = GcPhase::Sweeping;
+					metadata.gc.max_index = ExecuteForOne<index_t>(select_max_OBJECT);
+					metadata.gc.sweeping_index = 0;
+					metadata.gc.phase = GCPhase::Sweeping;
 					ExecuteUpdateMetadata(metadata);
 				}
 			});
 			this->metadata = metadata;
-			if (finish) { break; }
 
-			// interrupt
+			if (finish) {
+				break;
+			}
 		}
-		if (metadata.gc_phase != GcPhase::Sweeping) {
+		if (metadata.gc.phase != GCPhase::Sweeping) {
 			return;
 		}
 
 	sweeping:
 		for (;;) {
+			if (callback.Interrupt(metadata.gc)) {
+				return;
+			}
+
 			bool finish = false;
+
 			Transaction([&]() {
-				index_t next = ExecuteForOne<index_t>(select_next_OBJECT_begin_limit, metadata.gc_delete_index, gc_delete_batch_size) + 1;
-				Execute(delete_OBJECT_begin_end_gc, metadata.gc_delete_index, next, metadata.gc_mark);
-				metadata.gc_delete_index = next;
-				if (metadata.gc_delete_index > metadata.max_index) {
+				index_t next = ExecuteForOne<index_t>(select_next_OBJECT_begin_limit, metadata.gc.sweeping_index, gc_delete_batch_size) + 1;
+				Execute(delete_OBJECT_begin_end_gc, metadata.gc.sweeping_index, next, metadata.gc.mark);
+				metadata.gc.sweeping_index = next;
+				if (metadata.gc.sweeping_index > metadata.gc.max_index) {
 					finish = true;
-					metadata.gc_mark = !metadata.gc_mark;
-					metadata.gc_phase = GcPhase::Idle;
-					metadata.block_count_last_gc = ExecuteForOne<uint64>(select_count_OBJECT);
+
+					callback.Notify(metadata.gc);
+
+					metadata.gc.mark = !metadata.gc.mark;
+					metadata.gc.phase = GCPhase::Idle;
+					metadata.gc.block_count_prev = ExecuteForOne<uint64>(select_count_OBJECT);
+					metadata.gc.block_count = metadata.gc.block_count_prev;
+					metadata.gc.block_count_marked = 0;
 				}
 				ExecuteUpdateMetadata(metadata);
 			});
 			this->metadata = metadata;
-			if (finish) { break; }
 
-			// interrupt
+			if (finish) {
+				break;
+			}
 		}
+
+		callback.Notify(metadata.gc);
 	}
 };
 
@@ -305,13 +341,15 @@ void BlockManager::open_file(const char file[]) {
 
 block_ref BlockManager::get_root() { return db().get_root(); }
 
-void BlockManager::collect_garbage() { return db().collect_garbage(); }
-
 void BlockManager::begin_transaction() { db().BeginTransaction(); }
 
 void BlockManager::commit() { db().Commit(); }
 
 void BlockManager::rollback() { db().Rollback(); }
+
+const BlockManager::GCInfo& BlockManager::get_gc_info() { return db().get_gc_info(); }
+
+void BlockManager::gc(GCCallback& callback) { return db().gc(callback); }
 
 
 block_ref::block_ref(index_t index) : index(index) {}

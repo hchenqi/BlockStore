@@ -112,28 +112,23 @@ private:
 			tab.emplace(*it, *it);
 		}
 	}
-	void delete_random_children() {
+	void delete_random_child() {
 		if (!focus.get().list.empty()) {
 			focus.update([&](Item& item) {
-				std::shuffle(item.list.begin(), item.list.end(), gen);
-				item.list.erase(random_child_index(), item.list.end());
+				item.list.erase(random_child_index());
 			});
 		}
 	}
-	void copy_random_children() {
+	void copy_random_child() {
 		if (!focus.get().list.empty()) {
-			focus.update([&](Item& item) { std::shuffle(item.list.begin(), item.list.end(), gen); });
-			clipboard.insert(clipboard.end(), random_child_index(), focus.get().list.end());
+			clipboard.push_back(*random_child_index());
 		}
 	}
 	void paste_random() {
-		if (!clipboard.empty()) {
+		if (!clipboard.empty() && focus.get().list.size() < max_list_size) {
 			auto it = random_clipboard_index();
-			if (focus.get().list.size() + (clipboard.cend() - it) > max_list_size) {
-				it = clipboard.cend() - (max_list_size - focus.get().list.size());
-			}
-			focus.update([&](Item& item) { item.list.insert(item.list.end(), it, clipboard.cend()); });
-			clipboard.erase(it, clipboard.end());
+			focus.update([&](Item& item) { item.list.push_back(*it); });
+			clipboard.erase(it);
 		}
 	}
 
@@ -143,8 +138,8 @@ private:
 		&Test::close_random_tab,
 		&Test::create_random_child,
 		&Test::open_random_child,
-		&Test::delete_random_children,
-		&Test::copy_random_children,
+		&Test::delete_random_child,
+		&Test::copy_random_child,
 		&Test::paste_random
 	};
 public:
@@ -152,6 +147,44 @@ public:
 		(this->*operation[random_index(operation.size())])();
 	}
 };
+
+
+void print(const BlockManager::GCInfo& info) {
+	auto phase_to_string = [](BlockManager::GCPhase p) -> const char* {
+		switch (p) {
+		case BlockManager::GCPhase::Idle: return "Idle";
+		case BlockManager::GCPhase::Scanning: return "Scanning";
+		case BlockManager::GCPhase::Sweeping: return "Sweeping";
+		default: return "Unknown";
+		}
+	};
+
+	std::cout << "GC Info:" << std::endl;
+	std::cout << "  mark: " << (info.mark ? "true" : "false") << std::endl;
+	std::cout << "  phase: " << phase_to_string(info.phase) << std::endl;
+	std::cout << "  block_count_prev: " << info.block_count_prev << std::endl;
+	std::cout << "  block_count: " << info.block_count << std::endl;
+
+	if (info.block_count > 0) {
+		double marked_pct = (100.0 * static_cast<double>(info.block_count_marked)) / static_cast<double>(info.block_count);
+		std::cout << "  block_count_marked: " << info.block_count_marked << " (" << marked_pct << "%)" << std::endl;
+	} else {
+		std::cout << "  block_count_marked: " << info.block_count_marked << std::endl;
+	}
+
+	if (info.phase == BlockManager::GCPhase::Sweeping) {
+		std::cout << "  max_index: " << info.max_index << std::endl;
+
+		if (info.max_index > 0 && info.sweeping_index > 0) {
+			double sweep_pct = (100.0 * static_cast<double>(info.sweeping_index - 1)) / static_cast<double>(info.max_index);
+			std::cout << "  sweeping_index: " << info.sweeping_index << " (" << sweep_pct << "%)" << std::endl;
+		} else {
+			std::cout << "  sweeping_index: " << info.sweeping_index << std::endl;
+		}
+	}
+
+	std::cout << std::endl;
+}
 
 
 int main() {
@@ -190,10 +223,21 @@ int main() {
 			}
 		}
 
+		block_cache_shared::clear();
+
 		std::cout << "gc begin" << std::endl;
 
-		block_cache_shared::clear();
-		block_manager.collect_garbage();
+		class Callback : public BlockManager::GCCallback {
+			virtual void Notify(const GCInfo& info) override {
+				print(info);
+			}
+			virtual bool Interrupt(const GCInfo& info) override {
+				print(info);
+				return false;
+			}
+		}callback;
+
+		block_manager.gc(callback);
 
 		std::cout << "gc end" << std::endl;
 

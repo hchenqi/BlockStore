@@ -66,7 +66,7 @@ int main() {
 	}
 
 	block_cache_shared::clear();
-	block_manager.collect_garbage();
+	block_manager.gc();
 
 	return 0;
 }

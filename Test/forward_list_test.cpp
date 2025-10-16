@@ -59,7 +59,7 @@ int main() {
 		it = forward_list.erase_after(it);
 		print(forward_list);
 
-		block_manager.collect_garbage();
+		block_manager.gc();
 
 		print(forward_list);
 
@@ -72,8 +72,8 @@ int main() {
 	}
 
 	block_cache_shared::clear();
-	block_manager.collect_garbage();
-	block_manager.collect_garbage();
+	block_manager.gc();
+	block_manager.gc();
 
 	{
 		ForwardList<std::string> forward_list(block_manager.get_root());
@@ -83,7 +83,7 @@ int main() {
 		print(forward_list);
 	}
 
-	block_manager.collect_garbage();
+	block_manager.gc();
 
 	return 0;
 }

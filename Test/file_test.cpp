@@ -16,6 +16,6 @@ int main() {
 	}
 	block<uint64> root = block_manager.get_root();
 	root.write(0);
-	block_manager.collect_garbage();
+	block_manager.gc();
 	return 0;
 }

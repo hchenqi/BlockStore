@@ -71,7 +71,7 @@ int main() {
 		(*--it).set("5.0");
 		print(list);
 
-		block_manager.collect_garbage();
+		block_manager.gc();
 
 		print(list);
 
@@ -84,8 +84,8 @@ int main() {
 	}
 
 	block_cache_shared::clear();
-	block_manager.collect_garbage();
-	block_manager.collect_garbage();
+	block_manager.gc();
+	block_manager.gc();
 
 	{
 		List<std::string> list(block_manager.get_root());
@@ -95,7 +95,7 @@ int main() {
 		print(list);
 	}
 
-	block_manager.collect_garbage();
+	block_manager.gc();
 
 	return 0;
 }
