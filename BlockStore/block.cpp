@@ -64,14 +64,13 @@ private:
 	Query update_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ?";  // data: vector<byte>, ref: vector<index_t>, id: index_t -> void
 	Query update_gc_OBJECT_data_ref_id = "update OBJECT set data = ?, ref = ? where id = ? returning gc";  // data: vector<byte>, ref: vector<index_t>, id: index_t -> gc: bool
 
-	Query select_count_SCAN = "select count(*) from SCAN";  // void -> count: uint64
+	Query select_exists_SCAN = "select exists(select 1 from SCAN limit 1)";  // void -> exists: bool
 	Query update_ref_OBJECT_gc = "update OBJECT set gc = ? where id in (select id from SCAN order by rowid desc limit ?) and gc = ? returning ref";  // gc: bool, limit: uint64, gc: bool -> vector<ref: vector<index_t>>
 	Query delete_SCAN_limit = "delete from SCAN where rowid in (select rowid from SCAN order by rowid desc limit ?)";  // limit: uint64 -> void
 	Query insert_SCAN_id = "insert into SCAN values (?)";  // id: index_t -> void
 
-	Query select_count_OBJECT = "select count(*) from OBJECT";  // void -> count: uint64
 	Query select_max_OBJECT = "select max(id) from OBJECT";  // void -> id: index_t
-	Query select_next_OBJECT_begin_limit = "select max(id) from OBJECT where id >= ? order by id asc limit ?";  // begin: index_t, limit: uint64 -> next: index_t
+	Query select_end_OBJECT_begin_offset = "select id from OBJECT where id > ? order by id asc limit 1 offset ?";  // begin: index_t, offset: uint64 -> end: index_t
 	Query delete_OBJECT_begin_end_gc = "delete from OBJECT where id in (select id from OBJECT where id >= ? and id < ? and gc = ?)";  // begin: index_t, end: index_t, gc: bool -> void
 
 public:
@@ -84,6 +83,7 @@ public:
 				Execute(create_SCAN);
 
 				metadata.root_index = ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc.mark);
+				metadata.gc.block_count++;
 				Execute(insert_STATIC_data, Serialize(metadata).Get());
 			});
 			this->metadata = metadata;
@@ -107,18 +107,23 @@ private:
 
 private:
 	constexpr static uint64 allocation_batch_size = 32;
+	static_assert(allocation_batch_size > 0);
 private:
 	std::vector<index_t> allocation_list;
 public:
 	index_t allocate_index() {
 		if (allocation_list.empty()) {
 			try {
+				Metadata metadata = this->metadata;
 				allocation_list.reserve(allocation_batch_size);
 				Transaction([&]() {
 					while (allocation_list.size() < allocation_batch_size) {
 						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_OBJECT_gc, metadata.gc.phase == GCPhase::Sweeping ? !metadata.gc.mark : metadata.gc.mark));
 					}
+					metadata.gc.block_count += allocation_batch_size;
+					ExecuteUpdateMetadata(metadata);
 				});
+				this->metadata = metadata;
 			} catch (...) {
 				allocation_list.clear();
 				throw;
@@ -154,14 +159,14 @@ private:
 	constexpr static uint64 gc_scan_batch_size = 256;
 	constexpr static uint64 gc_delete_batch_size = 256 * 1024;
 
+	static_assert(gc_scan_step_depth > 0);
+	static_assert(gc_scan_changes_limit > 0);
+	static_assert(gc_scan_batch_size > 0);
+	static_assert(gc_delete_batch_size > 0);
+
 public:
 	const GCInfo& get_gc_info() {
-		GCInfo& info = metadata.gc;
-		if (info.phase == GCPhase::Idle) {
-			info.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
-			info.block_count_marked = 0;
-		}
-		return info;
+		return metadata.gc;
 	}
 	void gc(BlockManager::GCCallback& callback) {
 		Metadata metadata = this->metadata;
@@ -175,9 +180,6 @@ public:
 	idle:
 		Transaction([&]() {
 			Execute(insert_SCAN_id, metadata.root_index);
-
-			metadata.gc.block_count = ExecuteForOne<uint64>(select_count_OBJECT);
-			metadata.gc.block_count_marked = 0;
 
 			callback.Notify(metadata.gc);
 
@@ -197,7 +199,7 @@ public:
 			Transaction([&]() {
 				uint64 changes = 0;
 				for (uint64 i = 0; i < gc_scan_step_depth && changes < gc_scan_changes_limit; ++i) {
-					if (ExecuteForOne<uint64>(select_count_SCAN) == 0) {
+					if (ExecuteForOne<uint64>(select_exists_SCAN) == 0) {
 						finish = true;
 						break;
 					}
@@ -241,9 +243,10 @@ public:
 			bool finish = false;
 
 			Transaction([&]() {
-				index_t next = ExecuteForOne<index_t>(select_next_OBJECT_begin_limit, metadata.gc.sweeping_index, gc_delete_batch_size) + 1;
-				Execute(delete_OBJECT_begin_end_gc, metadata.gc.sweeping_index, next, metadata.gc.mark);
-				metadata.gc.sweeping_index = next;
+				index_t end = ExecuteForOneOptional<index_t>(select_end_OBJECT_begin_offset, metadata.gc.sweeping_index, gc_delete_batch_size - 1).value_or(metadata.gc.max_index + 1);
+				Execute(delete_OBJECT_begin_end_gc, metadata.gc.sweeping_index, end, metadata.gc.mark);
+				metadata.gc.block_count -= Changes();
+				metadata.gc.sweeping_index = end;
 				if (metadata.gc.sweeping_index > metadata.gc.max_index) {
 					finish = true;
 
@@ -251,8 +254,7 @@ public:
 
 					metadata.gc.mark = !metadata.gc.mark;
 					metadata.gc.phase = GCPhase::Idle;
-					metadata.gc.block_count_prev = ExecuteForOne<uint64>(select_count_OBJECT);
-					metadata.gc.block_count = metadata.gc.block_count_prev;
+					metadata.gc.block_count_prev = metadata.gc.block_count;
 					metadata.gc.block_count_marked = 0;
 				}
 				ExecuteUpdateMetadata(metadata);
