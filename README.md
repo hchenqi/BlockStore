@@ -1,16 +1,26 @@
 # BlockStore
 
-A C++ object storage framework, supporting object serialization, deserialization, referencing and garbage collection, with SQLite3 as backend database.
+A schema-free storage framework in C++ that supports storage and retrieval of custom objects and data structures.
 
-## Build Prerequisites
+## An Example
 
-### Tools
+From Test/string_test.cpp:
 
-- Visual Studio
-- CMake
-- Ninja
+```c++
+block_manager.open_file("data.db");
+block<std::string> root = block_manager.get_root();
+root.write("Hello world!");
+std::cout << root.read() << std::endl;
+```
 
-### Dependencies
+## Building Steps
 
-- CppSerialize
-- SQLite3Helper
+- Install the following software and tools:
+  - Visual Studio with C++ and CMake
+  - Ninja
+
+- Put these dependencies in the same parent folder:
+  - [CppSerialize](https://github.com/hchenqi/CppSerialize.git)
+  - [SQLite3Helper](https://github.com/hchenqi/SQLite3Helper.git)
+
+- Configure and build with CMake
