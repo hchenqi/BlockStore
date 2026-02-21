@@ -9,6 +9,8 @@
 
 BEGIN_NAMESPACE(BlockStore)
 
+constexpr size_t block_size_limit = 4096; // byte
+
 
 class block_ref : private ObjectCount<block_ref> {
 private:
