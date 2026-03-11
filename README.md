@@ -37,7 +37,7 @@ For example, each row in a table of a relational database could be regarded as a
 
 #### Block
 
-As the storage unit, a block has an upper size limit (4096 bytes for example), and each block can be accessed by a unique reference. Complex data structures are built on blocks with referencing.
+As the storage unit, a block has an upper size limit (4096 bytes for example), and each block can be accessed by a unique reference. Complex data structures are built on blocks by referencing.
 
 > As a comparison, a common file system or a database manages blocks and B-Tree or similar structures internally, but here blocks and references are exposed for users to build custom data structures.
 
@@ -55,7 +55,9 @@ For example, a list can be regarded as an item that has child items as its eleme
 
 Ideally, we only need a backend that can allocate and modify blocks. In this project, I'm using SQLite, a relational database, as backend simulating this behaviour with a single table and to provide transaction safety.
 
-Each block is stored as a row in `BLOCK` table with integer primary key `id` as its reference. Additional columns and tables are used for garbage collection.
+Each block is stored as a row in `BLOCK` table with integer primary key `id` as its reference and blob field `data` as for its data. Additional columns and tables are used for garbage collection.
+
+The backend is wrapped in `BlockManager` class, which provides interfaces for creating blocks, reading/writing block data by reference with transactions, and garbage collection.
 
 ### Garbage Collection
 
@@ -63,17 +65,40 @@ This project implements mark-and-sweep garbage collection. The `root` block is c
 
 Table `BLOCK` contains a boolean field `gc` as the mark and a blob field `ref` storing the list of references for each block. Table `SCAN` stores references of the next blocks to be searched. The reference of the root block is first inserted in table `SCAN`, and in each loop, some references will be fetched from table `SCAN` and those referenced blocks that are unmarked will be marked and their lists of references will be then inserted to table `SCAN`. When table `SCAN` becomes empty, all items unmarked are deleted. The mark is flipped at each round of garbage collection.
 
+> There can be duplications of references in table `SCAN` which could make table `SCAN` grow uncontrollably. Therefore, table `SCAN` can store the references uniquely, or it can be replaced by a partial index on table `BLOCK`.
+
 The reference of the root block, the mark and the progress of garbage collection are stored in a single row in table `META`. Scanning and sweeping are implemented batch-wise with a callback after each batch, so that garbage collection can be interrupted. The mechanism described above assumes no blocks are created or modified during garbage collection, otherwise, special procedures are applied.
 
 ### Block Creation/Read/Write
 
-A block is created with empty data and the reference is returned. With the reference, we can read and write the data of the block.
+A block is created through `BlockManager` without initial data and its reference is returned as `block_ref`. With `block_ref` we can read and write the data of the block. A `block_ref` itself can also be encoded as data and stored in a block.
 
-> Another design: a block must be created with some initial data before we can get its reference. Then the child blocks it references must be created first, and thus no circular references can be made directly. And the root block will also have to be properly initialized, whose reference will then have to be able to update. It's actually a typing problem whether a block could possibly be empty.
+A cache is kept by `BlockManager` to maintain active references, which include reference to the root block, references to blocks just created, references to blocks being read and references decoded from the data of a block. Each `block_ref` instance refer to a cache entry, and the cache entry maintains the number of `block_ref` instances. When the number becomes 0, the entry is no longer active, and can be removed from the cache.
 
-### Serialization
+When garbage collection begins, all active references in the cache are added to table `SCAN`, and inactive entries are removed. During scanning, references newly added in the cache are also added to table `SCAN`, if they are not already marked.
 
-### Cache
+> This ensures no dangling reference exists after garbage collection. A dangling reference could only appear when a block actually referenced is not marked by garbage collection and thus deleted. And this only happens when a block already marked is updated during garbage collection with new references to blocks never going to be marked. But this is impossible because the new references will always be marked.
+
+### Data
+
+The data of a block is stored in binary form as an array of bytes with a maximum of 4096 bytes.
+
+The interpretation of the data of a block is defined by user. When updating the data of a block, the user must additionally provide the list of references of the block explicitly.
+
+Common data types are u8, u16, u32, u64 (unsigned integer of 8-bit, 16-bit, 32-bit, 64-bit) and `block_ref`(stored as u64). With type `T` (or a list of types `T1`, `T2`, ..., `Tn`), the following types can be constructed:
+- array<T>: the length of the array in u16, then the repetition of data of type `T`
+- tuple<T1, T2, ..., Tn>: data of type T1, then data of type T2, ..., Tn
+- union<T1, T2, ..., Tn> (n <= 256): the index of the underlying type in u8, then the data of the underlying type
+
+The following data types can be considered as aliases:
+- boolean: union<true, false> (as u8)
+- u8: union<0, 1, ..., 255>
+- u16: tuple<u8, u8>
+- u32: tuple<u16, u16>
+- u64: tuple<u32, u32>
+- block_ref: u64
+- char: u8
+- string: array<char>
 
 ## Advanced Topics
 
