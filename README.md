@@ -47,7 +47,7 @@ An item is a logical concept that could have arbitrary type, size or sub-items. 
 
 A large item spanning multiple blocks can be referenced by the reference of its root block. And a small item can be stored as a property of a parent item along with other properties in one block, without having an own reference exposed for others.
 
-For example, a list can be regarded as an item that has child items as its elements. The list contains a root (sentinel) block and for each child item, an element block to store the item as well as references to previous and next element blocks. A child item can be stored inline in the element block if it's small enough to fit in and not going to be referenced by other items, or it can be stored in separate blocks while the element block stores only its reference.
+> For example, a list can be regarded as an item that has child items as its elements. The list contains a root (sentinel) block and for each child item, an element block to store the item as well as references to previous and next element blocks. A child item can be stored inline in the element block if it's small enough to fit in and not going to be referenced by other items, or it can be stored in separate blocks while the element block stores only its reference.
 
 ## Implementation
 
@@ -55,7 +55,7 @@ For example, a list can be regarded as an item that has child items as its eleme
 
 Ideally, we only need a backend that can allocate and modify blocks. In this project, I'm using SQLite, a relational database, as backend simulating this behaviour with a single table and to provide transaction safety.
 
-Each block is stored as a row in `BLOCK` table with integer primary key `id` as its reference and blob field `data` as for its data. Additional columns and tables are used for garbage collection.
+Each block is stored as a row in `BLOCK` table with integer primary key `id` as its reference and blob field `data` for its data. Additional columns and tables are used for garbage collection.
 
 The backend is wrapped in `BlockManager` class, which provides interfaces for creating blocks, reading/writing block data by reference with transactions, and garbage collection.
 
@@ -73,11 +73,15 @@ The reference of the root block, the mark and the progress of garbage collection
 
 A block is created through `BlockManager` without initial data and its reference is returned as `block_ref`. With `block_ref` we can read and write the data of the block. A `block_ref` itself can also be encoded as data and stored in a block.
 
-A cache is kept by `BlockManager` to maintain active references, which include reference to the root block, references to blocks just created, references to blocks being read and references decoded from the data of a block. Each `block_ref` instance refer to a cache entry, and the cache entry maintains the number of `block_ref` instances. When the number becomes 0, the entry is no longer active, and can be removed from the cache.
+Block creation and write operations can be grouped in transactions.
 
-When garbage collection begins, all active references in the cache are added to table `SCAN`, and inactive entries are removed. During scanning, references newly added in the cache are also added to table `SCAN`, if they are not already marked.
+`BlockManager` maintains a set of active references, which include reference to the root block, references to blocks just created, references to blocks being read and references decoded from the data of a block. Each entry in the set also keeps the number of `block_ref` instances. The entry is removed from the set when the number becomes 0.
 
-> This ensures no dangling reference exists after garbage collection. A dangling reference could only appear when a block actually referenced is not marked by garbage collection and thus deleted. And this only happens when a block already marked is updated during garbage collection with new references to blocks never going to be marked. But this is impossible because the new references will always be marked.
+When garbage collection begins, all active references in the set are added to table `SCAN`. During scanning, references newly added to the set will also be added to table `SCAN`.
+
+> This ensures no dangling reference exists after garbage collection. A dangling reference could only appear when a block actually referenced is not marked and thus deleted, and this only happens when a block already marked during garbage collection is updated with new references to blocks never going to be marked. But this is not the case because new references will always be marked.
+
+> We need to add all new references in the set to table `SCAN`, not just the ones referenced by a block already marked which is being updated, because all active references in the set can potentially be referenced by some block later. Before sweeping, they must be either marked or removed from the set.
 
 ### Data
 
