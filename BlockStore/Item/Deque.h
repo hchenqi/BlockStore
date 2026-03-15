@@ -4,9 +4,9 @@
 #include <cassert>
 
 
-BEGIN_NAMESPACE(BlockStore)
+namespace BlockStore {
 
-constexpr size_t deque_block_size_limit = block_size_limit - 2 * sizeof(index_t) - sizeof(size_t);
+constexpr size_t deque_block_size_limit = block_size_limit - 2 * sizeof(ref_t) - sizeof(size_t);
 
 template<class T>
 constexpr size_t deque_block_limit = deque_block_size_limit / layout_traits<T>::size();
@@ -59,7 +59,7 @@ public:
 		size_t curr_index;
 
 	private:
-		iterator(const List::iterator& list_iterator, size_t curr_index) : List::iterator(list_iterator), curr_index(curr_index) {}
+		iterator(List::iterator list_iterator, size_t curr_index) : List::iterator(std::move(list_iterator)), curr_index(curr_index) {}
 
 	private:
 		List::iterator& list_iterator() { return *this; }
@@ -126,7 +126,10 @@ public:
 	};
 
 public:
-	Deque(const block_ref& root) : List(root) {}
+	Deque(BlockCache& cache, block_ref root) : List(cache, std::move(root)) {}
+
+protected:
+	using List::cache;
 
 public:
 	using List::empty;
@@ -144,24 +147,24 @@ public:
 	using List::clear;
 
 	iterator emplace_back(auto&&... args) {
-		return block_manager.transaction([&] {
+		return cache.transaction([&] {
 			auto it = empty() ? List::emplace_back() : --List::end();
 			if (it->size() >= block_limit) {
 				it = List::emplace_back();
 			}
 			(*it).update([&](auto& vector) { vector.emplace_back(std::forward<decltype(args)>(args)...); });
-			return iterator(it, it->size() - 1);
+			return iterator(std::move(it), it->size() - 1);
 		});
 	}
 
 	iterator emplace_front(auto&&... args) {
-		return block_manager.transaction([&] {
+		return cache.transaction([&] {
 			auto it = empty() ? List::emplace_front() : List::begin();
 			if (it->size() >= block_limit) {
 				it = List::emplace_front();
 			}
 			(*it).update([&](auto& vector) { vector.emplace(vector.begin(), std::forward<decltype(args)>(args)...); });
-			return iterator(it, 0);
+			return iterator(std::move(it), 0);
 		});
 	}
 
@@ -173,7 +176,7 @@ public:
 			(*pos.list_iterator()).update([&](auto& vector) { vector.emplace(vector.begin() + pos.curr_index, std::forward<decltype(args)>(args)...); });
 			return pos;
 		} else {
-			return block_manager.transaction([&] {
+			return cache.transaction([&] {
 				if (pos.curr_index <= block_limit / 2) {
 					auto prev = List::emplace(pos);
 					if (pos.curr_index == 0) {
@@ -185,7 +188,7 @@ public:
 							curr.erase(curr.begin(), curr.begin() + pos.curr_index);
 						}); });
 					}
-					return iterator(prev, pos.curr_index);
+					return iterator(std::move(prev), pos.curr_index);
 				} else {
 					auto next = List::emplace(std::next(pos));
 					if (pos.curr_index == pos.list_iterator()->size()) {
@@ -197,7 +200,7 @@ public:
 							curr.erase(curr.begin() + pos.curr_index, curr.end());
 						}); });
 					}
-					return iterator(next, 0);
+					return iterator(std::move(next), 0);
 				}
 			});
 		}
@@ -252,4 +255,4 @@ public:
 };
 
 
-END_NAMESPACE(BlockStore)
+} // namespace BlockStore

@@ -4,10 +4,10 @@ A schema-free storage framework in C++.
 
 ## Usage Example
 
-From Test/string_test.cpp:
+From Test/file_test.cpp:
 
 ```c++
-block_manager.open_file("data.db");
+BlockManager block_manager("file_test.db");
 block<std::string> root = block_manager.get_root();
 root.write("Hello world!");
 std::cout << root.read() << std::endl;
@@ -87,26 +87,21 @@ When garbage collection begins, all active references in the set are added to ta
 
 The data of a block is stored in binary form as an array of bytes with a maximum of 4096 bytes.
 
-The interpretation of the data of a block is defined by user. When updating the data of a block, the user must additionally provide the list of references of the block explicitly.
+> As an optimization, the limit can be lowered so that the data and additional information of a row stored in SQLite doesn't take more than one actual page.
 
-Common data types are u8, u16, u32, u64 (unsigned integer of 8-bit, 16-bit, 32-bit, 64-bit) and `block_ref`(stored as u64). With type `T` (or a list of types `T1`, `T2`, ..., `Tn`), the following types can be constructed:
-- array<T>: the length of the array in u16, then the repetition of data of type `T`
-- tuple<T1, T2, ..., Tn>: data of type T1, then data of type T2, ..., Tn
-- union<T1, T2, ..., Tn> (n <= 256): the index of the underlying type in u8, then the data of the underlying type
+The interpretation of the data is defined by user. Therefore, when updating the data, the list of references must be explicitly provided for garbage collection.
 
-The following data types can be considered as aliases:
-- boolean: union<true, false> (as u8)
-- u8: union<0, 1, ..., 255>
-- u16: tuple<u8, u8>
-- u32: tuple<u16, u16>
-- u64: tuple<u32, u32>
-- block_ref: u64
-- char: u8
-- string: array<char>
+A class template `block<T>` extends `block_ref` for reading and writing blocks in custom type `T` using the serialization framework `CppSerialize`. It also handles the serialization and deserialization of `block_ref` automatically.
 
-## Advanced Topics
+### Cache
 
-### Typing
+A block might be accessed frequently or shared by multiple items. To avoid querying the database every time while maintaining the consistency of the data shared, especially for data structures like list, a cache storing deserialized blocks is provided as `BlockCache`.
+
+> `BlockManager` only provides the raw block data read and write interfaces, keeps a set of active references, but doesn't store the data. `BlockCache` is built on `BlockManager` that stores a map from active block references to deserialized block data objects in their own types.
+
+## Advanced
+
+### Dynamic Typing
 
 ### Copy-On-Write
 

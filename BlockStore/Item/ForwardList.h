@@ -1,7 +1,7 @@
-#include "block_cache.h"
+#include "../data/cache.h"
 
 
-BEGIN_NAMESPACE(BlockStore)
+namespace BlockStore {
 
 
 template<class T>
@@ -33,10 +33,10 @@ public:
 		friend class ForwardList;
 
 	private:
-		block_cache<Node> node;
+		block_view<Node> node;
 
 	private:
-		value_wrapper(const block_cache<Node>& node) : node(node) {}
+		value_wrapper(const block_view<Node>& node) : node(node) {}
 
 	public:
 		const T& get() const { return node.get().value; }
@@ -59,20 +59,20 @@ public:
 		using reference = T&;
 
 	private:
-		block_cache<Sentinel> root;
-		block_cache_lazy<Node> curr;
+		const block_view<Sentinel>* root;
+		block_view_lazy<Node> curr;
 
 	private:
-		iterator(const block_cache<Sentinel>& root, const block<Node>& curr) : root(root), curr(curr) {}
+		iterator(const block_view<Sentinel>& root, block_view_lazy<Node> curr) : root(&root), curr(std::move(curr)) {}
 
 	public:
 		bool operator==(const iterator& other) const { return curr == other.curr; }
 
 		value_wrapper operator*() {
-			if (curr == root) {
+			if (curr == *root) {
 				throw std::invalid_argument("cannot dereference end forward_list iterator");
 			}
-			return block_cache<Node>(static_cast<block<Node>>(curr));
+			return block_view<Node>(curr);
 		}
 
 		const T* operator->() {
@@ -80,22 +80,25 @@ public:
 		}
 
 		iterator& operator++() {
-			curr = curr == root ? root.get().next : curr.get().next;
+			curr = curr == *root ? root->get().next : curr.get().next;
 			return *this;
 		}
 	};
 
 public:
-	ForwardList(const block_ref& root) : root(root, [&] { return Sentinel(root); }) {}
+	ForwardList(BlockCache& cache, block<Sentinel> root) : cache(cache), root(cache.read(root, [&] { return Sentinel(root); })) {}
+
+protected:
+	BlockCache& cache;
 
 private:
-	block_cache<Sentinel> root;
+	block_view<Sentinel> root;
 
 public:
 	bool empty() const { return root.get().next == root; }
 
-	iterator before_begin() const { return iterator(root, root); }
-	iterator begin() const { return iterator(root, root.get().next); }
+	iterator before_begin() const { return iterator(root, cache.read_lazy<Node>(root)); }
+	iterator begin() const { return iterator(root, cache.read_lazy<Node>(root.get().next)); }
 	iterator end() const { return before_begin(); }
 
 	value_wrapper front() const {
@@ -114,10 +117,10 @@ public:
 	}
 
 	iterator emplace_front(auto&&... args) {
-		return block_manager.transaction([&] {
-			block_cache<Node> new_node(std::in_place, root.get().next, std::forward<decltype(args)>(args)...);
+		return cache.transaction([&] {
+			block_view<Node> new_node = cache.create<Node>(root.get().next, std::forward<decltype(args)>(args)...);
 			root.update([&](Sentinel& r) { r.next = new_node; });
-			return iterator(root, new_node);
+			return iterator(root, std::move(new_node));
 		});
 	}
 
@@ -125,10 +128,10 @@ public:
 		if (pos == before_begin()) {
 			return emplace_front(std::forward<decltype(args)>(args)...);
 		}
-		return block_manager.transaction([&] {
-			block_cache<Node> new_node(std::in_place, pos.curr.get().next, std::forward<decltype(args)>(args)...);
+		return cache.transaction([&] {
+			block_view<Node> new_node = cache.create<Node>(pos.curr.get().next, std::forward<decltype(args)>(args)...);
 			pos.curr.update([&](Node& n) { n.next = new_node; });
-			return iterator(root, new_node);
+			return iterator(root, std::move(new_node));
 		});
 	}
 
@@ -136,10 +139,10 @@ public:
 		if (empty()) {
 			throw std::invalid_argument("forward_list is empty");
 		}
-		return block_manager.transaction([&] {
-			block_cache<Node> next(root.get().next);
+		return cache.transaction([&] {
+			block_view<Node> next = cache.read(root.get().next);
 			root.update([&](Sentinel& r) { r.next = next.get().next; });
-			return iterator(root, next.get().next);
+			return iterator(root, cache.read_lazy(next.get().next));
 		});
 	}
 
@@ -150,13 +153,13 @@ public:
 		if (pos.curr.get().next == root) {
 			throw std::invalid_argument("forward_list erase iterator outside range");
 		}
-		return block_manager.transaction([&] {
-			block_cache<Node> next(pos.curr.get().next);
+		return cache.transaction([&] {
+			block_view<Node> next = cache.read(pos.curr.get().next);
 			pos.curr.update([&](Node& n) { n.next = next.get().next; });
-			return iterator(root, next.get().next);
+			return iterator(root, cache.read_lazy(next.get().next));
 		});
 	}
 };
 
 
-END_NAMESPACE(BlockStore)
+} // namespace BlockStore

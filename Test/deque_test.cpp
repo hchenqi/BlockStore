@@ -1,21 +1,16 @@
+#include "BlockStore/Item/Deque.h"
 #include "common.h"
-#include "BlockStore/Deque.h"
 
 
 using namespace BlockStore;
 
 
 int main() {
-	try {
-		block_manager.open_file("deque_test.db");
-	} catch (const std::exception& e) {
-		std::cout << e.what();
-		std::remove("deque_test.db");
-		return 0;
-	}
+	BlockManager block_manager("deque_test.db");
+	BlockCache cache(block_manager);
 
 	try {
-		Deque<uint64> deque(block_manager.get_root());
+		Deque<uint64> deque(cache, block_manager.get_root());
 		print(deque);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
@@ -23,8 +18,8 @@ int main() {
 	}
 
 	{
-		Deque<uint64> deque(block_manager.get_root());
-		block_manager.transaction([&]() {
+		Deque<uint64> deque(cache, block_manager.get_root());
+		cache.transaction([&]() {
 			for (int i = 0; i < 10; ++i) {
 				deque.emplace_back(i);
 			}
@@ -39,7 +34,7 @@ int main() {
 		deque.pop_back();
 		print(deque);
 
-		block_manager.transaction([&]() {
+		cache.transaction([&]() {
 			for (int i = 0; i < 10; ++i) {
 				deque.emplace_front(i);
 			}
@@ -65,8 +60,8 @@ int main() {
 		print(deque);
 	}
 
-	block_cache_shared::clear();
-	block_manager.gc();
+	cache.sweep();
+	block_manager.gc(GCOption{});
 
 	return 0;
 }

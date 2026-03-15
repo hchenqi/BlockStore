@@ -1,22 +1,17 @@
-#include "common.h"
-#include "BlockStore/List.h"
+#include "BlockStore/Item/List.h"
 #include "CppSerialize/stl/string.h"
+#include "common.h"
 
 
 using namespace BlockStore;
 
 
 int main() {
-	try {
-		block_manager.open_file("list_test.db");
-	} catch (const std::exception& e) {
-		std::cout << e.what();
-		std::remove("list_test.db");
-		return 0;
-	}
+	BlockManager block_manager("list_test.db");
+	BlockCache cache(block_manager);
 
 	try {
-		List<std::string> list(block_manager.get_root());
+		List<std::string> list(cache, block_manager.get_root());
 		print(list);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
@@ -24,10 +19,10 @@ int main() {
 	}
 
 	{
-		List<std::string> list(block_manager.get_root());
+		List<std::string> list(cache, block_manager.get_root());
 		print(list);
 
-		block_manager.transaction([&] {
+		cache.transaction([&] {
 			for (int i = 0; i < 10; ++i) {
 				list.emplace_back(std::to_string(i));
 			}
@@ -71,11 +66,11 @@ int main() {
 		(*--it).set("5.0");
 		print(list);
 
-		block_manager.gc();
+		block_manager.gc(GCOption{});
 
 		print(list);
 
-		block_manager.transaction([&] {
+		cache.transaction([&] {
 			for (int i = 0; i < 5; ++i) {
 				list.emplace_front(std::to_string(-i));
 			}
@@ -83,19 +78,19 @@ int main() {
 		print(list);
 	}
 
-	block_cache_shared::clear();
-	block_manager.gc();
-	block_manager.gc();
+	cache.sweep();
+	block_manager.gc(GCOption{});
+	block_manager.gc(GCOption{});
 
 	{
-		List<std::string> list(block_manager.get_root());
+		List<std::string> list(cache, block_manager.get_root());
 		print(list);
 
 		list.clear();
 		print(list);
 	}
 
-	block_manager.gc();
+	block_manager.gc(GCOption{});
 
 	return 0;
 }

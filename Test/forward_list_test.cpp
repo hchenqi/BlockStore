@@ -1,22 +1,17 @@
-#include "common.h"
-#include "BlockStore/ForwardList.h"
+#include "BlockStore/Item/ForwardList.h"
 #include "CppSerialize/stl/string.h"
+#include "common.h"
 
 
 using namespace BlockStore;
 
 
 int main() {
-	try {
-		block_manager.open_file("forward_list_test.db");
-	} catch (const std::exception& e) {
-		std::cout << e.what();
-		std::remove("forward_list_test.db");
-		return 0;
-	}
+	BlockManager block_manager("forward_list_test.db");
+	BlockCache cache(block_manager);
 
 	try {
-		ForwardList<std::string> forward_list(block_manager.get_root());
+		ForwardList<std::string> forward_list(cache, block_manager.get_root());
 		print(forward_list);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
@@ -24,10 +19,10 @@ int main() {
 	}
 
 	{
-		ForwardList<std::string> forward_list(block_manager.get_root());
+		ForwardList<std::string> forward_list(cache, block_manager.get_root());
 		print(forward_list);
 
-		block_manager.transaction([&] {
+		cache.transaction([&] {
 			for (int i = 9; i >= 0; --i) {
 				forward_list.emplace_front(std::to_string(i));
 			}
@@ -59,11 +54,11 @@ int main() {
 		it = forward_list.erase_after(it);
 		print(forward_list);
 
-		block_manager.gc();
+		block_manager.gc(GCOption{});
 
 		print(forward_list);
 
-		block_manager.transaction([&] {
+		cache.transaction([&] {
 			for (int i = 0; i < 5; ++i) {
 				forward_list.emplace_front(std::to_string(-i));
 			}
@@ -71,19 +66,19 @@ int main() {
 		print(forward_list);
 	}
 
-	block_cache_shared::clear();
-	block_manager.gc();
-	block_manager.gc();
+	cache.sweep();
+	block_manager.gc(GCOption{});
+	block_manager.gc(GCOption{});
 
 	{
-		ForwardList<std::string> forward_list(block_manager.get_root());
+		ForwardList<std::string> forward_list(cache, block_manager.get_root());
 		print(forward_list);
 
 		forward_list.clear();
 		print(forward_list);
 	}
 
-	block_manager.gc();
+	block_manager.gc(GCOption{});
 
 	return 0;
 }

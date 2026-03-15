@@ -1,4 +1,6 @@
-#include "BlockStore/block_manager.h"
+#include "BlockStore/core/manager.h"
+#include "BlockStore/data/block.h"
+#include "CppSerialize/stl/string.h"
 
 #include <iostream>
 
@@ -7,15 +9,11 @@ using namespace BlockStore;
 
 
 int main() {
-	try {
-		block_manager.open_file("file_test.db");
-	} catch (const std::exception& e) {
-		std::cout << e.what();
-		std::remove("file_test.db");
-		return 0;
-	}
-	block<uint64> root = block_manager.get_root();
-	root.write(0);
-	block_manager.gc();
+	BlockManager block_manager("file_test.db");
+	block<std::string> root = block_manager.get_root();
+	std::cout << root.read() << std::endl;
+	root.write("Hello world!");
+	std::cout << root.read() << std::endl;
+	block_manager.gc(GCOption{});
 	return 0;
 }
