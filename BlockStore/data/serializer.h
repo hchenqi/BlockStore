@@ -83,7 +83,7 @@ private:
 
 
 template<class T>
-struct BlockDeserialize {
+struct BlockDeserialize : protected block_ref_deserialize {
 public:
 	BlockDeserialize(BlockManager& manager, const std::vector<std::byte>& data) : manager(manager), data(data) {}
 private:
@@ -109,7 +109,7 @@ private:
 	static void access(BlockManager& manager, const std::vector<std::byte>& data, std::vector<std::byte>::const_iterator& index, block_ref& object) {
 		ref_t ref;
 		access(manager, data, index, ref);
-		object = block_ref(manager, ref);
+		object = block_ref_deserialize::construct(manager, ref);
 	}
 	static void access(BlockManager& manager, const std::vector<std::byte>& data, std::vector<std::byte>::const_iterator& index, auto& object) {
 		layout_traits<std::remove_cvref_t<decltype(object)>>::write([&](auto& item) { access(manager, data, index, item); }, object);

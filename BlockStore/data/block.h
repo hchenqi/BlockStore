@@ -20,7 +20,7 @@ public:
 public:
 	T read() const {
 		if (auto data = block_ref::read(); data.empty()) {
-			throw std::invalid_argument("block data empty");
+			throw std::invalid_argument("block data uninitialized");
 		} else {
 			return BlockDeserialize<T>(get_manager(), data).Get();
 		}

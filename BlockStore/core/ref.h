@@ -13,7 +13,7 @@ class BlockManager;
 class block_ref {
 private:
 	friend class BlockManager;
-	template<class T> friend class BlockDeserialize;
+	friend class block_ref_deserialize;
 private:
 	BlockManager* manager;
 	ref_t ref;
@@ -35,6 +35,12 @@ public:
 public:
 	std::vector<std::byte> read() const;
 	void write(const std::vector<std::byte>& data, const std::vector<ref_t>& ref_list);
+};
+
+
+class block_ref_deserialize {
+protected:
+	static block_ref construct(BlockManager& manager, ref_t ref) { return block_ref(manager, ref); }
 };
 
 

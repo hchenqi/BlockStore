@@ -228,6 +228,8 @@ int main() {
 
 			test.print();
 
+			print_gc_info(block_manager.get_gc_info());
+
 			if (command == "gc") {
 				block_manager.gc(GCOption{ [](const GCInfo& info) { print_gc_info(info); return false; } });
 			}

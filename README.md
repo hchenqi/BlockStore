@@ -95,7 +95,7 @@ A class template `block<T>` extends `block_ref` for reading and writing blocks i
 
 ### Cache
 
-A block might be accessed frequently or shared by multiple items. To avoid querying the database every time while maintaining the consistency of the data shared, especially for data structures like list, a cache storing deserialized blocks is provided as `BlockCache`.
+A block might be accessed frequently or shared by multiple items. To avoid querying the database every time while maintaining the consistency of the data shared, especially for common data structures that are often iterated over, a cache storing deserialized blocks is provided as `BlockCache`.
 
 > `BlockManager` only provides the raw block data read and write interfaces, keeps a set of active references, but doesn't store the data. `BlockCache` is built on `BlockManager` that stores a map from active block references to deserialized block data objects in their own types.
 

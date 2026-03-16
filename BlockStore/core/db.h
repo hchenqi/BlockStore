@@ -89,21 +89,17 @@ private:
 public:
 	ref_t allocate() {
 		if (allocation_list.empty()) {
-			try {
-				Metadata metadata = this->metadata;
-				allocation_list.reserve(allocation_batch_size);
-				Transaction([&]() {
-					while (allocation_list.size() < allocation_batch_size) {
-						allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_BLOCK_gc, metadata.gc.phase == GCPhase::Sweeping ? !metadata.gc.mark : metadata.gc.mark));
-					}
-					metadata.gc.block_count += allocation_batch_size;
-					ExecuteUpdateMetadata(metadata);
-				});
-				this->metadata = metadata;
-			} catch (...) {
-				allocation_list.clear();
-				throw;
-			}
+			Metadata metadata = this->metadata;
+			std::vector<ref_t> allocation_list; allocation_list.reserve(allocation_batch_size);
+			Transaction([&]() {
+				for (size_t i = 0; i < allocation_batch_size; ++i) {
+					allocation_list.emplace_back(ExecuteForOne<uint64>(insert_id_BLOCK_gc, metadata.gc.phase == GCPhase::Sweeping ? !metadata.gc.mark : metadata.gc.mark));
+				}
+				metadata.gc.block_count += allocation_batch_size;
+				ExecuteUpdateMetadata(metadata);
+			});
+			this->metadata = metadata;
+			this->allocation_list = std::move(allocation_list);
 		}
 		ref_t ref = allocation_list.back(); allocation_list.pop_back();
 		return ref;
@@ -158,18 +154,18 @@ public:
 
 	idle:
 		Transaction([&]() {
-			Execute(insert_SCAN_id, metadata.root_ref);
-
+			if (!active_ref_set.contains(metadata.root_ref)) {
+				Execute(insert_SCAN_id, metadata.root_ref);
+			}
 			for (const auto& pair : active_ref_set) {
 				Execute(insert_SCAN_id, pair.first);
 			}
-
-			option.callback(metadata.gc);
 
 			metadata.gc.phase = GCPhase::Scanning;
 			ExecuteUpdateMetadata(metadata);
 		});
 		this->metadata = metadata;
+		option.callback(metadata.gc);
 
 	scanning:
 		for (;;) {
@@ -179,7 +175,6 @@ public:
 				for (auto id : new_ref_list) {
 					Execute(insert_SCAN_id, id);
 				}
-				new_ref_list.clear();
 
 				uint64 changes = 0;
 				for (uint64 i = 0; i < option.scan_step_depth && changes < option.scan_changes_limit; ++i) {
@@ -195,18 +190,17 @@ public:
 				metadata.gc.block_count_marked += changes;
 
 				if (finish) {
-					option.callback(metadata.gc);
-
-					allocation_list.clear();
-
 					metadata.gc.phase = GCPhase::Sweeping;
 					metadata.gc.sweeping_id = 0;
 					ExecuteUpdateMetadata(metadata);
 				}
 			});
 			this->metadata = metadata;
+			new_ref_list.clear();
 
 			if (finish) {
+				allocation_list.clear();
+				option.callback(metadata.gc);
 				break;
 			}
 
@@ -228,8 +222,6 @@ public:
 				if (metadata.gc.sweeping_id > metadata.gc.max_id) {
 					finish = true;
 
-					option.callback(metadata.gc);
-
 					metadata.gc.mark = !metadata.gc.mark;
 					metadata.gc.phase = GCPhase::Idle;
 					metadata.gc.block_count_prev = metadata.gc.block_count;
@@ -240,6 +232,7 @@ public:
 			this->metadata = metadata;
 
 			if (finish) {
+				option.callback(metadata.gc);
 				break;
 			}
 
@@ -247,8 +240,6 @@ public:
 				return;
 			}
 		}
-
-		option.callback(metadata.gc);
 	}
 };
 
