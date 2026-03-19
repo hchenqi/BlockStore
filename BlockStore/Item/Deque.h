@@ -13,9 +13,13 @@ constexpr size_t deque_block_limit = deque_block_size_limit / layout_traits<T>::
 
 
 template<class T>
-class Deque : private List<std::vector<T>> {
+using DequeNode = std::conditional_t<deque_block_limit<T> <= 1, ListNode<T>, ListNode<std::vector<T>>>;
+
+
+template<class T, class CacheType>
+class Deque : private List<std::vector<T>, CacheType> {
 private:
-	using List = List<std::vector<T>>;
+	using List = List<std::vector<T>, CacheType>;
 
 public:
 	static constexpr size_t block_limit = deque_block_limit<T>;
@@ -29,7 +33,7 @@ public:
 		size_t index;
 
 	private:
-		value_wrapper(const List::value_wrapper& list_value_wrapper, size_t index) : List::value_wrapper(list_value_wrapper), index(index) {}
+		value_wrapper(List::value_wrapper list_value_wrapper, size_t index) : List::value_wrapper(std::move(list_value_wrapper)), index(index) {}
 
 	private:
 		List::value_wrapper& list_value_wrapper() { return *this; }
@@ -73,7 +77,7 @@ public:
 		}
 
 		const T* operator->() {
-			return (**this).operator->();
+			return &list_iterator()->at(curr_index);
 		}
 
 		iterator& operator++() {
@@ -126,7 +130,7 @@ public:
 	};
 
 public:
-	Deque(BlockCache& cache, block_ref root) : List(cache, std::move(root)) {}
+	Deque(CacheType& cache, block_ref root) : List(cache, std::move(root)) {}
 
 protected:
 	using List::cache;
@@ -248,10 +252,10 @@ public:
 };
 
 
-template<class T> requires (deque_block_limit<T> <= 1)
-class Deque<T> : public List<T> {
+template<class T, class CacheType> requires (deque_block_limit<T> <= 1)
+class Deque<T, CacheType> : public List<T, CacheType> {
 public:
-	using List<T>::List;
+	using List<T, CacheType>::List;
 };
 
 

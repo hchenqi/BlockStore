@@ -67,6 +67,8 @@ Table `BLOCK` contains a boolean field `gc` as the mark and a blob field `ref` s
 
 > There can be duplications of references in table `SCAN` which could make table `SCAN` grow uncontrollably. Therefore, table `SCAN` can store the references uniquely, or it can be replaced by a partial index on table `BLOCK`.
 
+> Updating only the `gc` bit in table `Block` for marking rows can be costly due to WAL (Write-Ahead Logging). Consider storing the mark of rows in a new table.
+
 The reference of the root block, the mark and the progress of garbage collection are stored in a single row in table `META`. Scanning and sweeping are implemented batch-wise with a callback after each batch, so that garbage collection can be interrupted. The mechanism described above assumes no blocks are created or modified during garbage collection, otherwise, special procedures are applied.
 
 ### Block Creation/Read/Write
@@ -91,11 +93,11 @@ The data of a block is stored in binary form as an array of bytes with a maximum
 
 The interpretation of the data is defined by user. Therefore, when updating the data, the list of references must be explicitly provided for garbage collection.
 
-A class template `block<T>` extends `block_ref` for reading and writing blocks in custom type `T` using the serialization framework `CppSerialize`. It also handles the serialization and deserialization of `block_ref` automatically.
+One can use class template `block<T>` which extends `block_ref` for reading and writing blocks in custom type `T` with help of the serialization framework `CppSerialize`. It also handles the serialization and deserialization of `block_ref` automatically.
 
 ### Cache
 
-A block might be accessed frequently or shared by multiple items. To avoid querying the database every time while maintaining the consistency of the data shared, especially for common data structures that are often iterated over, a cache storing deserialized blocks is provided as `BlockCache`.
+A block might be accessed frequently or shared by multiple items. To avoid querying the database every time while maintaining the consistency of the data shared, especially for common data structures that are often iterated over, a cache for storing deserialized blocks is provided optionally as `BlockCache`.
 
 > `BlockManager` only provides the raw block data read and write interfaces, keeps a set of active references, but doesn't store the data. `BlockCache` is built on `BlockManager` that stores a map from active block references to deserialized block data objects in their own types.
 

@@ -8,10 +8,13 @@ using namespace BlockStore;
 
 int main() {
 	BlockManager block_manager("forward_list_test.db");
-	BlockCache cache(block_manager);
+
+	using CacheType = BlockCache<ForwardListNode<std::string>>;
+
+	CacheType cache(block_manager);
 
 	try {
-		ForwardList<std::string> forward_list(cache, block_manager.get_root());
+		ForwardList<std::string, CacheType> forward_list(cache, block_manager.get_root());
 		print(forward_list);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
@@ -19,7 +22,7 @@ int main() {
 	}
 
 	{
-		ForwardList<std::string> forward_list(cache, block_manager.get_root());
+		ForwardList<std::string, CacheType> forward_list(cache, block_manager.get_root());
 		print(forward_list);
 
 		cache.transaction([&] {
@@ -71,7 +74,7 @@ int main() {
 	block_manager.gc(GCOption{});
 
 	{
-		ForwardList<std::string> forward_list(cache, block_manager.get_root());
+		ForwardList<std::string, CacheType> forward_list(cache, block_manager.get_root());
 		print(forward_list);
 
 		forward_list.clear();

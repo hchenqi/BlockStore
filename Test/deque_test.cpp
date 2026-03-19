@@ -7,10 +7,13 @@ using namespace BlockStore;
 
 int main() {
 	BlockManager block_manager("deque_test.db");
-	BlockCache cache(block_manager);
+
+	using CacheType = BlockCacheLocal<DequeNode<int>>;
+
+	CacheType cache(block_manager);
 
 	try {
-		Deque<uint64> deque(cache, block_manager.get_root());
+		Deque<int, CacheType> deque(cache, block_manager.get_root());
 		print(deque);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
@@ -18,7 +21,7 @@ int main() {
 	}
 
 	{
-		Deque<uint64> deque(cache, block_manager.get_root());
+		Deque<int, CacheType> deque(cache, block_manager.get_root());
 		cache.transaction([&]() {
 			for (int i = 0; i < 10; ++i) {
 				deque.emplace_back(i);

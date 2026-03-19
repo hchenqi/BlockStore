@@ -8,10 +8,13 @@ using namespace BlockStore;
 
 int main() {
 	BlockManager block_manager("list_test.db");
-	BlockCache cache(block_manager);
+
+	using CacheType = BlockCacheDynamicAdapter<ListNode<std::string>>;
+
+	CacheType cache(block_manager);
 
 	try {
-		List<std::string> list(cache, block_manager.get_root());
+		List<std::string, CacheType> list(cache, block_manager.get_root());
 		print(list);
 	} catch (...) {
 		block<std::tuple<>>(block_manager.get_root()).write({});
@@ -19,7 +22,7 @@ int main() {
 	}
 
 	{
-		List<std::string> list(cache, block_manager.get_root());
+		List<std::string, CacheType> list(cache, block_manager.get_root());
 		print(list);
 
 		cache.transaction([&] {
@@ -83,7 +86,7 @@ int main() {
 	block_manager.gc(GCOption{});
 
 	{
-		List<std::string> list(cache, block_manager.get_root());
+		List<std::string, CacheType> list(cache, block_manager.get_root());
 		print(list);
 
 		list.clear();

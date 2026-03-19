@@ -5,18 +5,22 @@ namespace BlockStore {
 
 
 template<class T>
+struct ListNode {
+	block<ListNode> next;
+	block<ListNode> prev;
+	T value;
+
+	ListNode() = default;
+	ListNode(const block<ListNode>& next, const block<ListNode>& prev, auto&&... args) : next(next), prev(prev), value(std::forward<decltype(args)>(args)...) {}
+
+	friend constexpr auto layout(layout_type<ListNode>) { return declare(&ListNode::next, &ListNode::prev, &ListNode::value); }
+};
+
+
+template<class T, class CacheType>
 class List {
 private:
-	struct Node {
-		block<Node> next;
-		block<Node> prev;
-		T value;
-
-		Node() = default;
-		Node(const block<Node>& next, const block<Node>& prev, auto&&... args) : next(next), prev(prev), value(std::forward<decltype(args)>(args)...) {}
-
-		friend constexpr auto layout(layout_type<Node>) { return declare(&Node::next, &Node::prev, &Node::value); }
-	};
+	using Node = ListNode<T>;
 
 	struct Sentinel {
 		block<Node> next;
@@ -34,9 +38,9 @@ public:
 	private:
 		friend class List;
 	private:
-		value_wrapper(block_view<Node> node) : node(std::move(node)) {}
+		value_wrapper(block_view<Node, CacheType> node) : node(std::move(node)) {}
 	private:
-		block_view<Node> node;
+		block_view<Node, CacheType> node;
 	public:
 		const T& get() const { return node.get().value; }
 		const T& set(auto&&... args) { return update([&](T& object) { object = T(std::forward<decltype(args)>(args)...); }); }
@@ -58,11 +62,11 @@ public:
 		using reference = T&;
 
 	private:
-		const block_view<Sentinel>* root;
-		block_view_lazy<Node> curr;
+		const block_view_local<Sentinel>* root;
+		block_view_lazy<Node, CacheType> curr;
 
 	private:
-		iterator(const block_view<Sentinel>& root, block_view_lazy<Node> curr) : root(&root), curr(std::move(curr)) {}
+		iterator(const block_view_local<Sentinel>& root, block_view_lazy<Node, CacheType> curr) : root(&root), curr(std::move(curr)) {}
 
 	public:
 		bool operator==(const iterator& other) const { return curr == other.curr; }
@@ -71,11 +75,14 @@ public:
 			if (curr == *root) {
 				throw std::invalid_argument("cannot dereference end list iterator");
 			}
-			return block_view<Node>(curr);
+			return block_view<Node, CacheType>(curr);
 		}
 
 		const T* operator->() {
-			return (**this).operator->();
+			if (curr == *root) {
+				throw std::invalid_argument("cannot dereference end list iterator");
+			}
+			return &curr.get().value;
 		}
 
 		iterator& operator++() {
@@ -107,19 +114,19 @@ public:
 	};
 
 public:
-	List(BlockCache& cache, block<Sentinel> root) : cache(cache), root(cache.read(root, [&] { return Sentinel(root); })) {}
+	List(CacheType& cache, block_ref root) : cache(cache), root(BlockCacheLocal<Sentinel>::read(std::move(root), [=] { return Sentinel(root); })) {}
 
 protected:
-	BlockCache& cache;
+	CacheType& cache;
 
 private:
-	block_view<Sentinel> root;
+	block_view_local<Sentinel> root;
 
 public:
 	bool empty() const { return root.get().next == root; }
 
 	iterator begin() const { return iterator(root, cache.read_lazy(root.get().next)); }
-	iterator end() const { return iterator(root, cache.read_lazy<Node>(root)); }
+	iterator end() const { return iterator(root, cache.read_lazy(root)); }
 
 	std::reverse_iterator<iterator> rbegin() const { return std::reverse_iterator<iterator>(end()); }
 	std::reverse_iterator<iterator> rend() const { return std::reverse_iterator<iterator>(begin()); }
@@ -148,11 +155,11 @@ public:
 
 	iterator emplace_back(auto&&... args) {
 		return cache.transaction([&] {
-			block_view<Node> new_node = cache.create<Node>(root, root.get().prev, std::forward<decltype(args)>(args)...);
+			block_view<Node, CacheType> new_node = cache.create(root, root.get().prev, std::forward<decltype(args)>(args)...);
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
-				block_view<Node> back = cache.read(root.get().prev);
+				block_view<Node, CacheType> back = cache.read(root.get().prev);
 				back.update([&](Node& n) { n.next = new_node; });
 				root.update([&](Sentinel& r) { r.prev = new_node; });
 			}
@@ -162,11 +169,11 @@ public:
 
 	iterator emplace_front(auto&&... args) {
 		return cache.transaction([&] {
-			block_view<Node> new_node = cache.create<Node>(root.get().next, root, std::forward<decltype(args)>(args)...);
+			block_view<Node, CacheType> new_node = cache.create(root.get().next, root, std::forward<decltype(args)>(args)...);
 			if (empty()) {
 				root.update([&](Sentinel& r) { r.next = r.prev = new_node; });
 			} else {
-				block_view<Node> front = cache.read(root.get().next);
+				block_view<Node, CacheType> front = cache.read(root.get().next);
 				front.update([&](Node& n) { n.prev = new_node; });
 				root.update([&](Sentinel& r) { r.next = new_node; });
 			}
@@ -182,8 +189,8 @@ public:
 			return emplace_front(std::forward<decltype(args)>(args)...);
 		}
 		return cache.transaction([&] {
-			block_view<Node> prev = cache.read(pos.curr.get().prev);
-			block_view<Node> new_node = cache.create<Node>(pos.curr, prev, std::forward<decltype(args)>(args)...);
+			block_view<Node, CacheType> prev = cache.read(pos.curr.get().prev);
+			block_view<Node, CacheType> new_node = cache.create(pos.curr, prev, std::forward<decltype(args)>(args)...);
 			prev.update([&](Node& n) { n.next = new_node; });
 			pos.curr.update([&](Node& n) { n.prev = new_node; });
 			return iterator(root, std::move(new_node));
@@ -195,11 +202,11 @@ public:
 			throw std::invalid_argument("list is empty");
 		}
 		return cache.transaction([&] {
-			block_view<Node> back = cache.read(root.get().prev);
+			block_view<Node, CacheType> back = cache.read(root.get().prev);
 			if (back.get().prev == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
 			} else {
-				block_view<Node> prev = cache.read(back.get().prev);
+				block_view<Node, CacheType> prev = cache.read(back.get().prev);
 				prev.update([&](Node& n) { n.next = root; });
 				root.update([&](Sentinel& r) { r.prev = prev; });
 			}
@@ -212,12 +219,12 @@ public:
 			throw std::invalid_argument("list is empty");
 		}
 		return cache.transaction([&] {
-			block_view<Node> front = cache.read(root.get().next);
+			block_view<Node, CacheType> front = cache.read(root.get().next);
 			if (front.get().next == root) {
 				root.update([&](Sentinel& r) { r.next = r.prev = root; });
 				return end();
 			} else {
-				block_view<Node> next = cache.read(front.get().next);
+				block_view<Node, CacheType> next = cache.read(front.get().next);
 				next.update([&](Node& n) { n.prev = root; });
 				root.update([&](Sentinel& r) { r.next = next; });
 				return iterator(root, std::move(next));
@@ -236,8 +243,8 @@ public:
 			return pop_front();
 		}
 		return cache.transaction([&] {
-			block_view<Node> prev = cache.read(pos.curr.get().prev);
-			block_view<Node> next = cache.read(pos.curr.get().next);
+			block_view<Node, CacheType> prev = cache.read(pos.curr.get().prev);
+			block_view<Node, CacheType> next = cache.read(pos.curr.get().next);
 			prev.update([&](Node& n) { n.next = next; });
 			next.update([&](Node& n) { n.prev = prev; });
 			return iterator(root, std::move(next));
