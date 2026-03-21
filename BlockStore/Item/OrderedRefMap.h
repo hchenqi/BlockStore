@@ -1,11 +1,13 @@
 #pragma once
 
 #include "../data/cache.h"
+#include "CppSerialize/stl/optional.h"
 #include "CppSerialize/stl/vector.h"
+
+#include <optional>
 
 #include <algorithm>
 #include <iterator>
-#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -13,124 +15,110 @@
 namespace BlockStore {
 
 
-template<class Key, class Value, class NodeCache, class KeyCache, class ValueCache, class Comp = std::less<Key>>
+template<class KeyType, class ValueType, class NodeCache, class KeyCache, class Comp = std::less<KeyType>>
 class OrderedRefMap {
-protected:
-	using Meta = std::pair<block<Node>, size_t>;  // { root, depth }
-	using Entry = std::pair<block_ref, block_ref>;  // { key, value }
-	using Node = std::vector<Entry>;
+private:
+	using Meta = std::pair<std::optional<block<Node>>, size_t>;
+	using NodeEntry = std::pair<KeyType, block_ref>;
+	using Node = std::vector<NodeEntry>;
+	using LeafEntry = std::conditional_t<std::is_void_v<ValueType>, KeyType, std::pair<KeyType, ValueType>>;
+	using Leaf = std::vector<LeafEntry>;
 
 private:
 	class node_iterator {
 	public:
-		node_iterator(block_view<Node, NodeCache> root) { pos.emplace_back(0, std::move(root)); }
+		node_iterator(NodeCache& cache) : cache(&cache) {}
 
 	protected:
+		NodeCache* cache;
 		std::vector<std::pair<size_t, block_view<Node, NodeCache>>> pos;
 
 	public:
-		bool is_root() const {
-			return pos.size() == 1;
+		bool empty() const {
+			return pos.empty();
 		}
 
-		bool is_begin() const {
-			for (const auto& [view, index] : reverse(pos)) {
-				if (index > 0) {
-					return false;
-				}
+		bool operator==(const node_iterator& other) const {
+			return pos == other.pos;
+		}
+
+		const Node& get() const {
+			if (empty()) {
+				throw std::invalid_argument("empty node_iterator");
 			}
-			return true;
-		}
-
-		bool is_end() const {
-			const auto& [view, index] = pos.back();
-			return index == view.get().size();
+			return pos.back().second.get();
 		}
 
 	public:
-		
+		node_iterator& clear() {
+			pos.clear();
+			return *this;
+		}
 
-	public:
-		void parent() {
-			if (is_root()) {
-				throw std::invalid_argument("getting parent of root node");
+		node_iterator& root(block_ref ref) {
+			pos.clear();
+			pos.emplace_back(0, cache->read(std::move(ref)));
+			return *this;
+		}
+
+		node_iterator& child(size_t index) {
+			if (empty()) {
+				throw std::invalid_argument("empty node_iterator");
+			}
+			pos.emplace_back(index, cache->read(get()[index].second));
+			return *this;
+		}
+
+		node_iterator& parent() {
+			if (empty()) {
+				throw std::invalid_argument("empty node_iterator");
 			}
 			pos.pop_back();
+			return *this;
 		}
 
-		void begin() {
-			auto& [view, index] = pos.back();
-			index = 0;
-		}
-
-		void back() {
-			auto& [view, index] = pos.back();
-			index = view.get().size() - 1;
-		}
-
-		void end() {
-			auto& [view, index] = pos.back();
-			index = view.get().size();
-		}
-
-		void child_begin() {
-			const auto& [view, index] = pos.back();
-			pos.emplace_back(cache.read(view.get()[index].second), 0);
-		}
-
-		void child_back() {
-			const auto& [view, index] = pos.back();
-			pos.emplace_back(cache.read(view.get()[index].second), view.get().size() - 1);
-		}
-
-		void child_end() {
-			const auto& [view, index] = pos.back();
-			pos.emplace_back(cache.read(view.get()[index].second), view.get().size());
-		}
-
-		void next(size_t offset = 1) {
-			if (offset == 0) {
-				return;
-			}
-			auto& [view, index] = pos.back();
-			if (index + offset <= view.get().size()) {
-				index += offset;
-				if (index == view.get().size()) {
-					try {
-						parent();
-						next(1);
-						child_begin();
-					} catch (...) {}
+		node_iterator& next() {
+			size_t level = 0;
+			size_t index;
+			do {
+				if (empty()) {
+					return *this;
 				}
-			} else {
-				parent();
-				next(1);
-				child_begin();
-				next(index + offset - view.get().size());
+				index = pos.back().first + 1;
+				pos.pop_back();
+				level++;
+			} while (index >= get().size());
+			while (level--) {
+				child(index);
+				index = 0;
 			}
+			return *this;
 		}
 
-		void prev(size_t offset = 1) {
-			if (offset == 0) {
-				return;
+		node_iterator& prev() {
+			size_t level = 0;
+			size_t index;
+			do {
+				if (empty()) {
+					return *this;
+				}
+				index = pos.back().first;
+				pos.pop_back();
+				level++;
+			} while (index == 0);
+			while (level--) {
+				child(index - 1);
+				index = get().size();
 			}
-			auto& [view, index] = pos.back();
-			if (index >= offset) {
-				index -= offset;
-			} else {
-				parent();
-				prev(1);
-				child_end();
-				prev(offset - index);
-			}
+			return *this;
 		}
 	};
 
 public:
 	class iterator : private node_iterator {
 	public:
-		using iterator_category = std::bidirectional_iterator_tag;
-		using value_type = Entry;
+		using iterator_category = std::forward_iterator_tag;
+		using value_type = LeafEntry;
 		using difference_type = std::ptrdiff_t;
 		using pointer = const value_type*;
 		using reference = const value_type&;
@@ -139,37 +127,47 @@ public:
 		friend class OrderedRefMap;
 
 	private:
-		iterator(node_iterator it) : node_iterator(std::move(it)) {}
+		iterator(node_iterator it, size_t index) : node_iterator(std::move(it)), index(index) {}
+
+	private:
+		size_t index;
 
 	public:
-		Entry operator*() {
-			const auto& [view, index] = pos.back();
-			return view.get()[index];
+		LeafEntry operator*() {
+			return get()[index];
+		}
+
+		const LeafEntry* operator->() {
+			return &get()[index];
 		}
 
 		iterator& operator++() {
-			node_iterator::next();
+			index++;
+			if (index == get().size()) {
+				next();
+				index = 0;
+			}
 			return *this;
 		}
 
 		iterator& operator+=(size_t offset) {
-			node_iterator::next(offset);
-			return *this;
-		}
-
-		iterator& operator--() {
-			node_iterator::prev();
-			return *this;
-		}
-
-		iterator& operator-=(size_t offset) {
-			node_iterator::prev(offset);
+			for (index += offset;;) {
+				size_t size = get().size();
+				if (index >= size) {
+					next();
+					index -= size;
+				} else {
+					break;
+				}
+			};
 			return *this;
 		}
 	};
 
 public:
-	OrderedMap(NodeCache& node_cache, KeyCache& key_cache, ValueCache& value_cache, block_ref ref) : node_cache(node_cache), meta(BlockCacheLocal<Meta>::read(std::move(ref), [&] { return std::make_pair(cache.create(), 0); })) {}
+	OrderedRefMap(NodeCache& node_cache, KeyCache& key_cache, ValueCache& value_cache, block_ref ref) :
+		node_cache(node_cache), key_cache(key_cache), value_cache(value_cache),
+		meta(BlockCacheLocal<Meta>::read(std::move(ref))) {}
 
 private:
 	block_view_local<Meta> meta;
@@ -180,37 +178,58 @@ private:
 	ValueCache& value_cache;
 
 private:
+	bool empty() const { return !meta.get().first.has_value(); }
 	size_t depth() const { return meta.get().second; }
 
-	node_iterator root() const { node_cache.read(meta.get().first); }
-
 private:
-
-
-public:
-	bool empty() const {
-		return root().is_end();
+	node_iterator node_root() const {
+		node_iterator it(node_cache);
+		it.root(meta.get().first.value());
+		return it;
 	}
-
-	iterator begin() const {
-		node_iterator it = root();
-		for (size_t i = 1, d = depth(); i <= d; ++i) {
-			it.child_begin();
+	node_iterator node_front() const {
+		if (empty()) {
+			return node_end();
+		}
+		node_iterator it = node_root();
+		size_t level = depth();
+		while (level--) {
+			it.child(0);
 		}
 		return it;
 	}
-
-	iterator end() const {
-		node_iterator it = root();
-		it.end();
+	node_iterator node_back() const {
+		if (empty()) {
+			return node_end();
+		}
+		node_iterator it = node_root();
+		size_t level = depth();
+		while (level--) {
+			it.child(it.get().size() - 1);
+		}
 		return it;
+	}
+	node_iterator node_end() const {
+		return node_iterator(node_cache);
 	}
 
 public:
-	std::optional<block_ref> lower_bound(const Key& key) const {
-		node_iterator it = root();
+	iterator begin() const { return iterator(node_front(), 0); }
+	iterator end() const { return iterator(node_end(), 0); }
 
-
+public:
+	template<class Key
+	iterator lower_bound(const Key& key) const {
+		if (empty()) {
+			return end();
+		}
+		node_iterator it = node_root();
+		size_t level = depth();
+		while (level--) {
+			const Node& node = it.get();
+			size_t index = std::lower_bound(node.begin(), node.end(), key, [&](const NodeEntry& entry, const Key& key) { return Comp()(key_cache.read(entry.first).get(), key); }) - node.begin();
+			it.child(index);
+		}
 
 		auto [node_ref, node, idx] = locate_leaf(key);
 		if (!is_valid(node_ref)) {
@@ -222,7 +241,7 @@ public:
 		return std::nullopt;
 	}
 
-	void insert(const block_ref& key, const block_ref& value) {
+	void insert(Entry entry) {
 		if (!is_valid(root)) {
 			root = create_node(true);
 		}
@@ -383,7 +402,7 @@ private:
 								   [&](const block_ref& a, const block_ref& b) { return compare_keys(a, b) < 0; });
 		size_t idx = it - node.keys.begin();
 		if (idx >= node.values.size()) {
-			throw std::runtime_error("OrderedMap internal node malformed");
+			throw std::runtime_error("OrderedRefMap internal node malformed");
 		}
 
 		auto child_split = insert_internal(node.values[idx], key, value);
