@@ -2,6 +2,8 @@
 #include "CppSerialize/stl/string.h"
 #include "common.h"
 
+#include <deque>
+
 
 using namespace BlockStore;
 
@@ -91,6 +93,7 @@ public:
 template<class T, template<class T> class Cache>
 void print(UnorderedRefSet<Cache> set) {
 	print(set, [](const auto& i) { return static_cast<const block<T>&>(i).read(); });
+	//print(set, [](const auto& i) { return i; });
 }
 
 
@@ -103,14 +106,11 @@ int main() {
 		OrderedRefSet<std::string, BlockCacheDynamicAdapter> set(cache, cache, cache, block_manager.get_root());
 		print(set);
 
-		set.insert("6");
-		print(set);
-		set.insert("4");
-		print(set);
-		set.insert("7");
-		print(set);
-		set.insert("3");
-		print(set);
+		std::deque<std::string> values = { "6", "4", "7", "3", "1", "5", "2", "9", "8" };
+		while (!values.empty()) {
+			set.insert(values.front()); values.pop_front();
+			print(set);
+		}
 
 		set.clear();
 		print(set);
@@ -122,14 +122,11 @@ int main() {
 		UnorderedRefSet<BlockCacheDynamicAdapter> set(cache, cache, block_manager.get_root());
 		print<std::string>(set);
 
-		set.insert(cache.create<std::string>("6").drop());
-		print<std::string>(set);
-		set.insert(cache.create<std::string>("4").drop());
-		print<std::string>(set);
-		set.insert(cache.create<std::string>("7").drop());
-		print<std::string>(set);
-		set.insert(cache.create<std::string>("3").drop());
-		print<std::string>(set);
+		std::deque<std::string> values = { "6", "4", "7", "3", "1", "5", "2", "9", "8" };
+		while (!values.empty()) {
+			set.insert(cache.create<std::string>(values.front()).drop()); values.pop_front();
+			print<std::string>(set);
+		}
 
 		set.clear();
 		print<std::string>(set);

@@ -61,6 +61,9 @@ private:
 		std::vector<std::pair<size_t, block_view<Node, NodeCache>>> pos;
 	protected:
 		bool is_empty() const { return pos.empty(); }
+		bool is_root() const { return pos.size() == 1; }
+		size_t node_index() const { return pos.back().second; }
+		block_view<Node, NodeCache>& node() { return pos.back().second; }
 		const Node& get() const { return pos.back().second.get(); }
 	private:
 		void parent() {
@@ -356,6 +359,13 @@ private:
 	}
 
 private:
+	static Node split_node(Node& node) {
+		size_t index = node.size() / 2;
+		Node next(std::make_move_iterator(node.begin() + index), std::make_move_iterator(node.end()));
+		node.erase(node.begin() + index, node.end());
+		return next;
+	}
+
 	static Leaf split_leaf(Leaf& leaf) {
 		size_t index = leaf.size() / 2;
 		Leaf next(std::make_move_iterator(leaf.begin() + index), std::make_move_iterator(leaf.end()));
@@ -364,32 +374,87 @@ private:
 	}
 
 private:
+	void update_node_key(node_iterator it, const Key& key) {
+		if (it.is_root()) {
+		} else {
+			size_t node_index = it.node_index(); it.parent();
+			it.node().update([&](Node& node) {
+				node[node_index].first = key;
+				if (node_index == 0) {
+					update_node_key(std::move(it), key);
+				}
+			});
+		}
+	}
+
+	void update_leaf_key(leaf_iterator it, const Key& key) {
+		if (it.is_root()) {
+		} else {
+			it.node().update([&](Node& node) {
+				node[it.leaf_index].first = key;
+				if (it.leaf_index == 0) {
+					update_node_key(std::move(it), key);
+				}
+			});
+		}
+	}
+
+private:
 	template<class K>
-	void insert_after(leaf_iterator it, const K& k, const NodeEntry& entry) {
+	void insert_node_after(node_iterator it, const K& k, NodeEntry entry) {
 		if (it.is_root()) {
 			meta.update([&](Meta& meta) {
-				meta.first = node_cache.create(Node{ std::make_pair(key(it.get()[0]), block_ref(it.leaf)), entry }).drop();
+				meta.first = node_cache.create(Node{ std::make_pair(key(it.get()[0]), block_ref(it.node())), std::move(entry) }).drop();
 				meta.second++;
 			});
 		} else {
-			throw std::invalid_argument("unimplemented");
+			size_t node_index = it.node_index(); it.parent();
+			it.node().update([&](Node& node) {
+				node.emplace(node.begin() + node_index + 1, std::move(entry));
+				if (node_should_split(node)) {
+					Node next = split_node(node); Key next_key = key(next.front());
+					insert_node_after(std::move(it), k, std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
+				}
+			});
 		}
 	}
 
 	template<class K>
-	void insert(iterator it, const K& k, const LeafEntry& entry) {
+	void insert_leaf_after(leaf_iterator it, const K& k, NodeEntry entry) {
+		if (it.is_root()) {
+			meta.update([&](Meta& meta) {
+				meta.first = node_cache.create(Node{ std::make_pair(key(it.get()[0]), block_ref(it.leaf)), std::move(entry) }).drop();
+				meta.second++;
+			});
+		} else {
+			it.node().update([&](Node& node) {
+				node.emplace(node.begin() + it.leaf_index + 1, std::move(entry));
+				if (node_should_split(node)) {
+					Node next = split_node(node); Key next_key = key(next.front());
+					insert_node_after(std::move(it), k, std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
+				}
+			});
+		}
+	}
+
+	template<class K>
+	void insert(iterator it, const K& k, LeafEntry entry) {
 		it.leaf.update([&](Leaf& leaf) {
-			leaf.emplace(leaf.begin() + it.index, entry);
+			leaf.emplace(leaf.begin() + it.index, std::move(entry));
+			if (it.index == 0) {
+				update_leaf_key(it, key(leaf.front()));
+			}
 			if (leaf_should_split(leaf)) {
-				insert_after(std::move(it), k, std::make_pair(key(entry), leaf_cache.create(split_leaf(leaf)).drop()));
+				Leaf next = split_leaf(leaf); Key next_key = key(next.front());
+				insert_leaf_after(std::move(it), k, std::make_pair(std::move(next_key), leaf_cache.create(std::move(next)).drop()));
 			}
 		});
 	}
 
 public:
 	template<class K>
-	void insert(const K& k, const LeafEntry& entry) {
-		insert(upper_bound(k), k, entry);
+	void insert(const K& k, LeafEntry entry) {
+		insert(upper_bound(k), k, std::move(entry));
 	}
 
 	void erase(iterator begin, iterator end) {
