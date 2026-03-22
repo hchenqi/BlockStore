@@ -170,8 +170,8 @@ public:
 		}
 	public:
 		bool operator==(const iterator& other) const {
-			if (leaf_iterator::operator==(other) && index == other.index) {
-				return true;
+			if (leaf_iterator::operator==(other)) {
+				return index == other.index;
 			}
 			if (is_end()) {
 				try {
@@ -241,7 +241,7 @@ public:
 	};
 
 public:
-	Tree(NodeCache& node_cache, LeafCache& leaf_cache, block_ref meta, Comp comp) : node_cache(node_cache), leaf_cache(leaf_cache), meta(BlockCacheLocal<Meta>::read(std::move(meta), [&] { return std::make_pair(leaf_cache.create(), 0); })), comp(comp) {}
+	Tree(NodeCache& node_cache, LeafCache& leaf_cache, block_ref meta, Comp comp) : node_cache(node_cache), leaf_cache(leaf_cache), meta(BlockCacheLocal<Meta>::read(std::move(meta), [&] { return std::make_pair(leaf_cache.create().drop(), 0); })), comp(comp) {}
 
 private:
 	block_view_local<Meta> meta;
@@ -269,7 +269,7 @@ private:
 			return root_leaf();
 		} else {
 			for (node_iterator it = root_node();;) {
-				size_t index = f(it);
+				size_t index = f(it.get());
 				if (--level > 0) {
 					it.child(index);
 				} else {
@@ -279,31 +279,29 @@ private:
 		}
 	}
 	iterator find(leaf_iterator it, auto f) const {
-		size_t index = f(it);
+		size_t index = f(it.get());
 		return iterator(std::move(it), index);
 	}
 
 private:
-	leaf_iterator leaf_front() const { return find_leaf([](const node_iterator& it) { return 0; }); }
-	leaf_iterator leaf_back() const { return find_leaf([](const node_iterator& it) { return it.get().size() - 1; }); }
+	leaf_iterator leaf_front() const { return find_leaf([](const Node& node) { return 0; }); }
+	leaf_iterator leaf_back() const { return find_leaf([](const Node& node) { return node.size() - 1; }); }
 
 public:
-	iterator begin() const { return find(leaf_front(), [](const leaf_iterator& it) { return 0; }); }
-	iterator end() const { return find(leaf_back(), [](const leaf_iterator& it) { return it.get().size(); }); }
+	iterator begin() const { return find(leaf_front(), [](const Leaf& leaf) { return 0; }); }
+	iterator end() const { return find(leaf_back(), [](const Leaf& leaf) { return leaf.size(); }); }
 
 private:
 	template<class K>
 	leaf_iterator lower_bound_leaf(const K& k) const {
-		return find_leaf([&](const node_iterator& it) {
-			const Node& node = it.get();
+		return find_leaf([&](const Node& node) {
 			size_t index = std::lower_bound(node.begin(), node.end(), k, [&](const NodeEntry& entry, const K& k) { return comp(key(entry), k); }) - node.begin();
 			return index > 0 ? index - 1 : index;
 		});
 	}
 	template<class K>
 	leaf_iterator upper_bound_leaf(const K& k) const {
-		return find_leaf([&](const node_iterator& it) {
-			const Node& node = it.get();
+		return find_leaf([&](const Node& node) {
 			size_t index = std::upper_bound(node.begin(), node.end(), k, [&](const K& k, const NodeEntry& entry) { return comp(k, key(entry)); }) - node.begin();
 			return index > 0 ? index - 1 : index;
 		});
@@ -312,15 +310,13 @@ private:
 public:
 	template<class K>
 	iterator lower_bound(const K& k) const {
-		return find(lower_bound_leaf(k), [&](const leaf_iterator& it) {
-			const Leaf& leaf = it.get();
+		return find(lower_bound_leaf(k), [&](const Leaf& leaf) {
 			return std::lower_bound(leaf.begin(), leaf.end(), k, [&](const LeafEntry& entry, const K& k) { return comp(key(entry), k); }) - leaf.begin();
 		});
 	}
 	template<class K>
 	iterator upper_bound(const K& k) const {
-		return find(lower_bound_leaf(k), [&](const leaf_iterator& it) {
-			const Leaf& leaf = it.get();
+		return find(lower_bound_leaf(k), [&](const Leaf& leaf) {
 			return std::upper_bound(leaf.begin(), leaf.end(), k, [&](const K& k, const LeafEntry& entry) { return comp(k, key(entry)); }) - leaf.begin();
 		});
 	}
@@ -328,10 +324,20 @@ public:
 private:
 	template<class K>
 	void insert_at(iterator it, const K& k, LeafEntry entry) {
-
+		it.leaf.update([&](Leaf& leaf) {
+			leaf.emplace(leaf.begin() + it.index, std::move(entry));
+		});
 	}
 
 public:
+	void clear() {
+		if (depth() == 0) {
+			root_leaf().leaf.update([](Leaf& leaf) { leaf.clear(); });
+		} else {
+			root_node().pos.back().second.update([](Node& node) { node.clear(); });
+		}
+	}
+
 	template<class K>
 	void insert(const K& k, LeafEntry entry) {
 		insert_at(upper_bound(k), k, std::move(entry));

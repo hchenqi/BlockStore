@@ -22,14 +22,17 @@ private:
 public:
 	block_view_lazy(const block_view_lazy<T, CacheType>& other) : block<T>(other), cache(other.cache), object(other.object) { if (object) { cache->inc_ref(*this); } }
 	block_view_lazy(block_view_lazy<T, CacheType>&& other) : block<T>(std::move(other)), cache(other.cache), object(other.object) { other.object = nullptr; }
-	~block_view_lazy() { if (object) { cache->dec_ref(*this); } }
+	~block_view_lazy() { drop(); }
 private:
 	CacheType* cache;
 	mutable const T* object;
 public:
-	block_view_lazy& operator=(const block<T>& other) { if (object) { cache->dec_ref(*this); object = nullptr; } block<T>::operator=(other); return *this; }
-	block_view_lazy& operator=(block_view_lazy<T, CacheType>&& other) { if (object) { cache->dec_ref(*this); } block<T>::operator=(std::move(other)); cache = other.cache; object = other.object; other.object = nullptr; return *this; }
-	block_view_lazy& operator=(const block_view_lazy<T, CacheType>& other) { if (object) { cache->dec_ref(*this); } block<T>::operator=(other); cache = other.cache; object = other.object; if (object) { cache->inc_ref(*this); } return *this; }
+	block_view_lazy& drop()& { if (object) { cache->dec_ref(*this); object = nullptr; } return *this; }
+	block_view_lazy&& drop()&& { if (object) { cache->dec_ref(*this); object = nullptr; } return std::move(*this); }
+public:
+	block_view_lazy& operator=(const block<T>& other) { drop(); block<T>::operator=(other); return *this; }
+	block_view_lazy& operator=(block_view_lazy<T, CacheType>&& other) { drop(); block<T>::operator=(std::move(other)); cache = other.cache; object = other.object; other.object = nullptr; return *this; }
+	block_view_lazy& operator=(const block_view_lazy<T, CacheType>& other) { drop(); block<T>::operator=(other); cache = other.cache; object = other.object; if (object) { cache->inc_ref(*this); } return *this; }
 private:
 	block<T>::read;
 	block<T>::write;
@@ -157,10 +160,6 @@ public:
 	}
 	block_view<T, BlockCache<T>> read(block<T> ref, auto init) {
 		return block_view<T, BlockCache<T>>(read_lazy(std::move(ref)), std::forward<decltype(init)>(init));
-	}
-	template<class T>
-	block_view<T, BlockCache<T>> write(block<T> ref, auto&&... args) {
-		return block_view<T, BlockCache<T>>(std::move(ref), *this, std::in_place, std::forward<decltype(args)>(args)...);
 	}
 	block_view<T, BlockCache<T>> create(auto&&... args) {
 		return block_view<T, BlockCache<T>>(manager.allocate(), *this, std::in_place, std::forward<decltype(args)>(args)...);
@@ -325,10 +324,6 @@ public:
 		return block_view<T, BlockCacheDynamic>(read_lazy(std::move(ref)), std::forward<decltype(init)>(init));
 	}
 	template<class T>
-	block_view<T, BlockCacheDynamic> write(block<T> ref, auto&&... args) {
-		return block_view<T, BlockCacheDynamic>(std::move(ref), *this, std::in_place, std::forward<decltype(args)>(args)...);
-	}
-	template<class T>
 	block_view<T, BlockCacheDynamic> create(auto&&... args) {
 		return block_view<T, BlockCacheDynamic>(manager.allocate(), *this, std::in_place, std::forward<decltype(args)>(args)...);
 	}
@@ -368,7 +363,7 @@ public:
 
 public:
 	template<class Adapter>
-	operator Adapter&() { return static_cast<Adapter&>(*this); }
+	operator Adapter& () { return static_cast<Adapter&>(*this); }
 };
 
 template<class T>
@@ -384,10 +379,6 @@ public:
 	}
 	block_view<T, BlockCacheDynamicAdapter<T>> read(block<T> ref, auto init) {
 		return block_view<T, BlockCacheDynamicAdapter<T>>(read_lazy(std::move(ref)), std::forward<decltype(init)>(init));
-	}
-	template<class T>
-	block_view<T, BlockCacheDynamicAdapter<T>> write(block<T> ref, auto&&... args) {
-		return block_view<T, BlockCacheDynamicAdapter<T>>(std::move(ref), *this, std::in_place, std::forward<decltype(args)>(args)...);
 	}
 	block_view<T, BlockCacheDynamicAdapter<T>> create(auto&&... args) {
 		return block_view<T, BlockCacheDynamicAdapter<T>>(manager.allocate(), *this, std::in_place, std::forward<decltype(args)>(args)...);
@@ -410,9 +401,12 @@ public:
 	block_view_lazy(const block_view_lazy<T, BlockCacheLocal<T>>& other) : block<T>(other), object(other.object) {}
 	block_view_lazy(block_view_lazy<T, BlockCacheLocal<T>>&& other) : block<T>(std::move(other)), object(std::move(other.object)) {}
 public:
-	block_view_lazy& operator=(const block<T>& other) { object.reset(); block<T>::operator=(other); return *this; }
-	block_view_lazy& operator=(block_view_lazy<T, BlockCacheLocal<T>>&& other) { block<T>::operator=(std::move(other)); object = std::move(other.object); return *this; }
-	block_view_lazy& operator=(const block_view_lazy<T, BlockCacheLocal<T>>& other) { block<T>::operator=(other); object = other.object; return *this; }
+	block_view_lazy& drop()& { object.reset(); return *this; }
+	block_view_lazy&& drop()&& { object.reset(); return std::move(*this); }
+public:
+	block_view_lazy& operator=(const block<T>& other) { drop(); block<T>::operator=(other); return *this; }
+	block_view_lazy& operator=(block_view_lazy<T, BlockCacheLocal<T>>&& other) { drop(); block<T>::operator=(std::move(other)); object = std::move(other.object); return *this; }
+	block_view_lazy& operator=(const block_view_lazy<T, BlockCacheLocal<T>>& other) { drop(); block<T>::operator=(other); object = other.object; return *this; }
 private:
 	block<T>::read;
 	block<T>::write;
