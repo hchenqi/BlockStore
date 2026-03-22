@@ -71,7 +71,7 @@ private:
 		}
 	protected:
 		void next() {
-			size_t level = pos.size();
+			size_t level = pos.size() - 1;
 			size_t index;
 			for (;; level--) {
 				if (level == 0) {
@@ -87,7 +87,7 @@ private:
 			}
 		}
 		void prev() {
-			size_t level = pos.size();
+			size_t level = pos.size() - 1;
 			size_t index;
 			for (;; level--) {
 				if (level == 0) {
@@ -132,7 +132,7 @@ private:
 			leaf_index = index;
 			leaf = leaf_cache->read(node_iterator::get()[leaf_index].second);
 		}
-		leaf_iterator& prev() {
+		void prev() {
 			if (is_root()) {
 				throw std::invalid_argument("prev doesn't exist");
 			}
@@ -174,17 +174,25 @@ public:
 				return index == other.index;
 			}
 			if (is_end()) {
-				try {
-					normalize();
-					return *this == other;
-				} catch (...) {
+				if (other.index == 0) {
+					try {
+						normalize();
+						return *this == other;
+					} catch (...) {
+						return false;
+					}
+				} else {
 					return false;
 				}
 			} else if (other.is_end()) {
-				try {
-					other.normalize();
-					return *this == other;
-				} catch (...) {
+				if (index == 0) {
+					try {
+						other.normalize();
+						return *this == other;
+					} catch (...) {
+						return false;
+					}
+				} else {
 					return false;
 				}
 			} else {
@@ -291,6 +299,9 @@ public:
 	iterator begin() const { return find(leaf_front(), [](const Leaf& leaf) { return 0; }); }
 	iterator end() const { return find(leaf_back(), [](const Leaf& leaf) { return leaf.size(); }); }
 
+	std::reverse_iterator<iterator> rbegin() const { return std::reverse_iterator<iterator>(end()); }
+	std::reverse_iterator<iterator> rend() const { return std::reverse_iterator<iterator>(begin()); }
+
 private:
 	template<class K>
 	leaf_iterator lower_bound_leaf(const K& k) const {
@@ -321,26 +332,73 @@ public:
 		});
 	}
 
-private:
-	template<class K>
-	void insert_at(iterator it, const K& k, LeafEntry entry) {
-		it.leaf.update([&](Leaf& leaf) {
-			leaf.emplace(leaf.begin() + it.index, std::move(entry));
-		});
-	}
-
 public:
 	void clear() {
 		if (depth() == 0) {
 			root_leaf().leaf.update([](Leaf& leaf) { leaf.clear(); });
 		} else {
-			root_node().pos.back().second.update([](Node& node) { node.clear(); });
+			meta.update([&](Meta& meta) { meta = std::make_pair(leaf_cache.create().drop(), 0); });
+		}
+	}
+
+private:
+	static bool node_should_split(const Node& node) {
+		return node.size() > 3;
+	}
+	static bool node_should_merge(const Node& node) {
+		return node.size() < 2;
+	}
+	static bool leaf_should_split(const Leaf& leaf) {
+		return leaf.size() > 3;
+	}
+	static bool leaf_should_merge(const Leaf& leaf) {
+		return leaf.size() < 2;
+	}
+
+private:
+	static Leaf split_leaf(Leaf& leaf) {
+		size_t index = leaf.size() / 2;
+		Leaf next(std::make_move_iterator(leaf.begin() + index), std::make_move_iterator(leaf.end()));
+		leaf.erase(leaf.begin() + index, leaf.end());
+		return next;
+	}
+
+private:
+	template<class K>
+	void insert_after(leaf_iterator it, const K& k, const NodeEntry& entry) {
+		if (it.is_root()) {
+			meta.update([&](Meta& meta) {
+				meta.first = node_cache.create(Node{ std::make_pair(key(it.get()[0]), block_ref(it.leaf)), entry }).drop();
+				meta.second++;
+			});
+		} else {
+			throw std::invalid_argument("unimplemented");
 		}
 	}
 
 	template<class K>
-	void insert(const K& k, LeafEntry entry) {
-		insert_at(upper_bound(k), k, std::move(entry));
+	void insert(iterator it, const K& k, const LeafEntry& entry) {
+		it.leaf.update([&](Leaf& leaf) {
+			leaf.emplace(leaf.begin() + it.index, entry);
+			if (leaf_should_split(leaf)) {
+				insert_after(std::move(it), k, std::make_pair(key(entry), leaf_cache.create(split_leaf(leaf)).drop()));
+			}
+		});
+	}
+
+public:
+	template<class K>
+	void insert(const K& k, const LeafEntry& entry) {
+		insert(upper_bound(k), k, entry);
+	}
+
+	void erase(iterator begin, iterator end) {
+
+	}
+
+	template<class K>
+	void erase(const K& k) {
+		erase(lower_bound(k), upper_bound(k));
 	}
 };
 

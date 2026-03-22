@@ -6,6 +6,22 @@
 using namespace BlockStore;
 
 
+inline void print(const auto& container, auto get = [](const auto& i) { return i.get(); }) {
+	for (auto i : container) {
+		std::cout << get(i) << ' ';
+	}
+	std::cout << std::endl;
+
+	if constexpr (reversible<decltype(container)>) {
+		for (auto i : reverse(container)) {
+			std::cout << get(i) << ' ';
+		}
+		std::cout << std::endl;
+		std::cout << std::endl;
+	}
+}
+
+
 template<class Key, template<class T> class Cache>
 class KeyRefComp {
 private:
@@ -51,10 +67,30 @@ public:
 
 template<class Key, template<class T> class Cache>
 void print(OrderedRefSet<Key, Cache> set) {
-	for (auto i : set) {
-		std::cout << i.read() << ' ';
+	print(set, [](const auto& i) { return i.read(); });
+}
+
+
+using UnorderedRefSetNode = TreeNode<block_ref>;
+using UnorderedRefSetLeaf = TreeLeaf<block_ref, void>;
+
+template<template<class T> class Cache>
+class UnorderedRefSet : public Tree<block_ref, void, std::less<block_ref>, Cache> {
+private:
+	using Base = Tree<block_ref, void, std::less<block_ref>, Cache>;
+	using NodeCache = Base::NodeCache;
+	using LeafCache = Base::LeafCache;
+public:
+	UnorderedRefSet(NodeCache& node_cache, LeafCache& leaf_cache, block_ref meta) : Base(node_cache, leaf_cache, std::move(meta), std::less<block_ref>()) {}
+public:
+	void insert(const block_ref& ref) {
+		Base::insert(ref, ref);
 	}
-	std::cout << std::endl;
+};
+
+template<class T, template<class T> class Cache>
+void print(UnorderedRefSet<Cache> set) {
+	print(set, [](const auto& i) { return static_cast<const block<T>&>(i).read(); });
 }
 
 
@@ -62,19 +98,42 @@ int main() {
 	BlockManager block_manager("tree_test.db");
 	BlockCacheDynamic cache(block_manager);
 
-	OrderedRefSet<std::string, BlockCacheDynamicAdapter> set(cache, cache, cache, block_manager.get_root());
-	print(set);
+	{
+		block<std::tuple<>>(block_manager.get_root()).write({});
+		OrderedRefSet<std::string, BlockCacheDynamicAdapter> set(cache, cache, cache, block_manager.get_root());
+		print(set);
 
-	set.clear();
-	print(set);
+		set.insert("6");
+		print(set);
+		set.insert("4");
+		print(set);
+		set.insert("7");
+		print(set);
+		set.insert("3");
+		print(set);
 
-	set.insert("6");
-	print(set);
+		set.clear();
+		print(set);
+	}
+	cache.sweep();
 
-	set.insert("4");
-	set.insert("7");
-	set.insert("3");
-	print(set);
+	{
+		block<std::tuple<>>(block_manager.get_root()).write({});
+		UnorderedRefSet<BlockCacheDynamicAdapter> set(cache, cache, block_manager.get_root());
+		print<std::string>(set);
+
+		set.insert(cache.create<std::string>("6").drop());
+		print<std::string>(set);
+		set.insert(cache.create<std::string>("4").drop());
+		print<std::string>(set);
+		set.insert(cache.create<std::string>("7").drop());
+		print<std::string>(set);
+		set.insert(cache.create<std::string>("3").drop());
+		print<std::string>(set);
+
+		set.clear();
+		print<std::string>(set);
+	}
 
 	return 0;
 }
