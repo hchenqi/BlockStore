@@ -16,10 +16,11 @@ template<class T>
 using DequeNode = std::conditional_t<deque_block_limit<T> <= 1, ListNode<T>, ListNode<std::vector<T>>>;
 
 
-template<class T, class CacheType>
-class Deque : private List<std::vector<T>, CacheType> {
+template<class T, template<class T> class Cache>
+class Deque : private List<std::vector<T>, Cache> {
 private:
-	using List = List<std::vector<T>, CacheType>;
+	using List = List<std::vector<T>, Cache>;
+	using CacheType = Cache<ListNode<std::vector<T>>>;
 
 public:
 	static constexpr size_t block_limit = deque_block_limit<T>;
@@ -252,10 +253,10 @@ public:
 };
 
 
-template<class T, class CacheType> requires (deque_block_limit<T> <= 1)
-class Deque<T, CacheType> : public List<T, CacheType> {
+template<class T, template<class T> class Cache> requires (deque_block_limit<T> <= 1)
+class Deque<T, Cache> : public List<T, Cache> {
 public:
-	using List<T, CacheType>::List;
+	using List<T, Cache>::List;
 };
 
 

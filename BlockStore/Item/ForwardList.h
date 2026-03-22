@@ -16,10 +16,11 @@ struct ForwardListNode {
 };
 
 
-template<class T, class CacheType>
+template<class T, template<class T> class Cache>
 class ForwardList {
 private:
 	using Node = ForwardListNode<T>;
+	using CacheType = Cache<Node>;
 
 	struct Sentinel {
 		block<Node> next;

@@ -365,6 +365,10 @@ public:
 			return res;
 		}
 	}
+
+public:
+	template<class Adapter>
+	operator Adapter&() { return static_cast<Adapter&>(*this); }
 };
 
 template<class T>

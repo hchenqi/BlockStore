@@ -17,10 +17,11 @@ struct ListNode {
 };
 
 
-template<class T, class CacheType>
+template<class T, template<class T> class Cache>
 class List {
 private:
 	using Node = ListNode<T>;
+	using CacheType = Cache<Node>;
 
 	struct Sentinel {
 		block<Node> next;
