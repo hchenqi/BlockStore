@@ -1,28 +1,40 @@
 #pragma once
 
 #include "../data/cache.h"
-#include "CppSerialize/stl/optional.h"
 #include "CppSerialize/stl/vector.h"
 
 #include <cassert>
-
-#include <algorithm>
-#include <iterator>
 #include <stdexcept>
-#include <vector>
+#include <algorithm>
 
 
 namespace BlockStore {
 
 
-template<class Key, class Value, class NodeCache, class LeafCache, class Comp>
+template<class Key>
+using TreeNodeEntry = std::pair<Key, block_ref>;
+
+template<class Key>
+using TreeNode = std::vector<TreeNodeEntry<Key>>;
+
+template<class Key, class Value>
+using TreeLeafEntry = std::conditional_t<std::is_void_v<Value>, Key, std::pair<Key, Value>>;
+
+template<class Key, class Value>
+using TreeLeaf = std::vector<TreeLeafEntry<Key, Value>>;
+
+
+template<class Key, class Value, class Comp, template<class T> class Cache>
 class Tree {
 private:
 	using Meta = std::pair<block_ref, size_t>;
-	using NodeEntry = std::pair<Key, block_ref>;
-	using Node = std::vector<NodeEntry>;
-	using LeafEntry = std::conditional_t<std::is_void_v<Value>, Key, std::pair<Key, Value>>;
-	using Leaf = std::vector<LeafEntry>;
+	using NodeEntry = TreeNodeEntry<Key>;
+	using Node = TreeNode<Key>;
+	using LeafEntry = TreeLeafEntry<Key, Value>;
+	using Leaf = TreeLeaf<Key, Value>;
+protected:
+	using NodeCache = Cache<Node>;
+	using LeafCache = Cache<Leaf>;
 
 private:
 	static const Key& key(const NodeEntry& entry) {
@@ -55,7 +67,7 @@ private:
 			pos.pop_back();
 		}
 		void child(size_t index) {
-			pos.emplace_back(index, cache->read(get()[index].second));
+			pos.emplace_back(index, node_cache->read(get()[index].second));
 		}
 	protected:
 		void next() {
@@ -71,7 +83,7 @@ private:
 				}
 			}
 			for (; level < pos.size(); level++, index = 0) {
-				pos[level] = std::make_pair(index, cache->read(pos[level - 1].second.get()[index].second));
+				pos[level] = std::make_pair(index, node_cache->read(pos[level - 1].second.get()[index].second));
 			}
 		}
 		void prev() {
@@ -87,7 +99,7 @@ private:
 				}
 			}
 			for (; level < pos.size(); level++, index = pos[level - 1].second.get().size()) {
-				pos[level] = std::make_pair(index - 1, cache->read(pos[level - 1].second.get()[index - 1].second));
+				pos[level] = std::make_pair(index - 1, node_cache->read(pos[level - 1].second.get()[index - 1].second));
 			}
 		}
 	};
@@ -148,7 +160,7 @@ public:
 	private:
 		size_t index;
 	private:
-		bool is_end() const { return index >= get().size(); }
+		bool is_end() const { return index >= leaf_iterator::get().size(); }
 	private:
 		void normalize() const {
 			if (is_end()) {
@@ -181,11 +193,11 @@ public:
 		}
 		LeafEntry operator*() {
 			normalize();
-			return get()[index];
+			return leaf_iterator::get()[index];
 		}
 		const LeafEntry* operator->() {
 			normalize();
-			return &get()[index];
+			return &leaf_iterator::get()[index];
 		}
 		iterator& operator++() {
 			normalize();
@@ -194,7 +206,7 @@ public:
 		}
 		iterator& operator+=(size_t offset) {
 			for (index += offset;;) {
-				if (size_t size = get().size(); index > size) {
+				if (size_t size = leaf_iterator::get().size(); index > size) {
 					leaf_iterator::next();
 					index -= size;
 				} else {
@@ -206,7 +218,7 @@ public:
 		iterator& operator--() {
 			if (index == 0) {
 				leaf_iterator::prev();
-				index = get().size();
+				index = leaf_iterator::get().size();
 				assert(index > 0);
 			}
 			index--;
@@ -217,7 +229,7 @@ public:
 				if (index < offset) {
 					offset -= index;
 					leaf_iterator::prev();
-					index = get().size();
+					index = leaf_iterator::get().size();
 					assert(index > 0);
 				} else {
 					index -= offset;
@@ -229,10 +241,11 @@ public:
 	};
 
 public:
-	Tree(NodeCache& node_cache, LeafCache& leaf_cache, block_ref ref) : node_cache(node_cache), leaf_cache(leaf_cache), meta(BlockCacheLocal<Meta>::read(std::move(ref), [&] { return std::make_pair(leaf_cache.create(), 0); })) {}
+	Tree(NodeCache& node_cache, LeafCache& leaf_cache, block_ref meta, Comp comp) : node_cache(node_cache), leaf_cache(leaf_cache), meta(BlockCacheLocal<Meta>::read(std::move(meta), [&] { return std::make_pair(leaf_cache.create(), 0); })), comp(comp) {}
 
 private:
 	block_view_local<Meta> meta;
+	Comp comp;
 
 private:
 	NodeCache& node_cache;
@@ -245,18 +258,18 @@ private:
 	node_iterator root_node() const {
 		return node_iterator(node_cache, meta.get().first);
 	}
-
 	leaf_iterator root_leaf() const {
 		return leaf_iterator(leaf_cache, meta.get().first);
 	}
 
-	leaf_iterator leaf_front() const {
+private:
+	leaf_iterator find_leaf(auto f) const {
 		size_t level = depth();
 		if (level == 0) {
 			return root_leaf();
 		} else {
 			for (node_iterator it = root_node();;) {
-				size_t index = 0;
+				size_t index = f(it);
 				if (--level > 0) {
 					it.child(index);
 				} else {
@@ -265,109 +278,63 @@ private:
 			}
 		}
 	}
-
-	leaf_iterator leaf_back() const {
-		size_t level = depth();
-		if (level == 0) {
-			return root_leaf();
-		} else {
-			for (node_iterator it = root_node();;) {
-				size_t index = it.get().size() - 1;
-				if (--level > 0) {
-					it.child(index);
-				} else {
-					return leaf_iterator(std::move(it), leaf_cache, index);
-				}
-			}
-		}
-	}
-
-public:
-	iterator begin() const {
-		return iterator(leaf_front(), 0);
-	}
-
-	iterator end() const {
-		leaf_iterator it = leaf_back();
-		size_t index = it.get().size() - 1;
+	iterator find(leaf_iterator it, auto f) const {
+		size_t index = f(it);
 		return iterator(std::move(it), index);
 	}
 
 private:
-	leaf_iterator find_leaf(auto f) {
+	leaf_iterator leaf_front() const { return find_leaf([](const node_iterator& it) { return 0; }); }
+	leaf_iterator leaf_back() const { return find_leaf([](const node_iterator& it) { return it.get().size() - 1; }); }
 
-	}
+public:
+	iterator begin() const { return find(leaf_front(), [](const leaf_iterator& it) { return 0; }); }
+	iterator end() const { return find(leaf_back(), [](const leaf_iterator& it) { return it.get().size(); }); }
 
 private:
 	template<class K>
 	leaf_iterator lower_bound_leaf(const K& k) const {
-		size_t level = depth();
-		if (level == 0) {
-			return root_leaf();
-		} else {
-			for (node_iterator it = root_node();;) {
-				const Node& node = it.get();
-				assert(node.size() >= 2);
-				size_t index = std::lower_bound(node.begin(), node.end(), k, [&](const NodeEntry& entry, K& k) { return Comp()(key(entry), k); }) - node.begin();
-				if (index > 0) { index--; }
-				if (--level > 0) {
-					it.child(index);
-				} else {
-					return leaf_iterator(std::move(it), leaf_cache, index);
-				}
-			}
-		}
+		return find_leaf([&](const node_iterator& it) {
+			const Node& node = it.get();
+			size_t index = std::lower_bound(node.begin(), node.end(), k, [&](const NodeEntry& entry, const K& k) { return comp(key(entry), k); }) - node.begin();
+			return index > 0 ? index - 1 : index;
+		});
 	}
-
 	template<class K>
 	leaf_iterator upper_bound_leaf(const K& k) const {
-		size_t level = depth();
-		if (level == 0) {
-			return root_leaf();
-		} else {
-			node_iterator it = root_node();
-			while (level--) {
-				const Node& node = it.get();
-				assert(node.size() >= 2);
-				size_t index = std::upper_bound(node.begin(), node.end(), k, [&](const NodeEntry& entry, K& k) { return Comp()(key(entry), k); }) - node.begin();
-				if (index > 0) { index--; }
-				if (level > 0) {
-					it.child(index);
-				} else {
-					return leaf_iterator(std::move(it), leaf_cache, index);
-				}
-			}
-		}
+		return find_leaf([&](const node_iterator& it) {
+			const Node& node = it.get();
+			size_t index = std::upper_bound(node.begin(), node.end(), k, [&](const K& k, const NodeEntry& entry) { return comp(k, key(entry)); }) - node.begin();
+			return index > 0 ? index - 1 : index;
+		});
 	}
-
-private:
-	void insert_at(iterator it, LeafEntry entry) {}
 
 public:
 	template<class K>
 	iterator lower_bound(const K& k) const {
-		leaf_iterator it = lower_bound_leaf(k);
-		const Leaf& leaf = it.get();
-		assert(leaf.size() >= 2);
-		size_t index = std::lower_bound(leaf.begin(), leaf.end(), k, [&](const LeafEntry& entry, K& k) { return Comp()(key(entry), k); }) - node.begin();
-		return iterator(it, index);
+		return find(lower_bound_leaf(k), [&](const leaf_iterator& it) {
+			const Leaf& leaf = it.get();
+			return std::lower_bound(leaf.begin(), leaf.end(), k, [&](const LeafEntry& entry, const K& k) { return comp(key(entry), k); }) - leaf.begin();
+		});
 	}
-
 	template<class K>
 	iterator upper_bound(const K& k) const {
-		leaf_iterator it = upper_bound_leaf(k);
-		const Leaf& leaf = it.get();
-		assert(leaf.size() >= 2);
-		size_t index = std::upper_bound(leaf.begin(), leaf.end(), k, [&](const LeafEntry& entry, K& k) { return Comp()(key(entry), k); }) - node.begin();
-		return iterator(it, index);
+		return find(lower_bound_leaf(k), [&](const leaf_iterator& it) {
+			const Leaf& leaf = it.get();
+			return std::upper_bound(leaf.begin(), leaf.end(), k, [&](const K& k, const LeafEntry& entry) { return comp(k, key(entry)); }) - leaf.begin();
+		});
 	}
 
-	void insert(LeafEntry entry) {
-		auto [found, it] = find(key(entry));
-		if (found) {
-			throw std::invalid_argument("index")
-		}
+private:
+	template<class K>
+	void insert_at(iterator it, const K& k, LeafEntry entry) {
 
+	}
+
+public:
+	template<class K>
+	void insert(const K& k, LeafEntry entry) {
+		insert_at(upper_bound(k), k, std::move(entry));
 	}
 };
 
