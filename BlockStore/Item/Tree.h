@@ -15,7 +15,10 @@ template<class Key>
 using TreeNodeEntry = std::pair<Key, block_ref>;
 
 template<class Key>
-using TreeNode = std::vector<TreeNodeEntry<Key>>;
+using TreeNodeKeys = std::vector<TreeNodeEntry<Key>>;
+
+template<class Key>
+using TreeNode = std::pair<block_ref, TreeNodeKeys<Key>>;
 
 template<class Key, class Value>
 using TreeLeafEntry = std::conditional_t<std::is_void_v<Value>, Key, std::pair<Key, Value>>;
@@ -29,6 +32,7 @@ class Tree {
 private:
 	using Meta = std::pair<block_ref, size_t>;
 	using NodeEntry = TreeNodeEntry<Key>;
+	using NodeKeys = TreeNodeKeys<Key>;
 	using Node = TreeNode<Key>;
 	using LeafEntry = TreeLeafEntry<Key, Value>;
 	using Leaf = TreeLeaf<Key, Value>;
@@ -36,6 +40,16 @@ protected:
 	using NodeCache = Cache<Node>;
 	using LeafCache = Cache<Leaf>;
 
+private:
+	static NodeKeys& keys(Node& node) {
+		return node.second;
+	}
+	static const NodeKeys& keys(const Node& node) {
+		return node.second;
+	}
+	static const block_ref& child_ref(const Node& node, size_t index) {
+		return index == 0 ? node.first : keys(node)[index - 1].second;
+	}
 private:
 	static const Key& key(const NodeEntry& entry) {
 		return entry.first;
@@ -62,7 +76,7 @@ private:
 	protected:
 		bool is_empty() const { return pos.empty(); }
 		bool is_root() const { return pos.size() == 1; }
-		size_t node_index() const { return pos.back().second; }
+		size_t node_index() const { return pos.back().first; }
 		block_view<Node, NodeCache>& node() { return pos.back().second; }
 		const Node& get() const { return pos.back().second.get(); }
 	private:
@@ -70,7 +84,7 @@ private:
 			pos.pop_back();
 		}
 		void child(size_t index) {
-			pos.emplace_back(index, node_cache->read(get()[index].second));
+			pos.emplace_back(index, node_cache->read(child_ref(get(), index)));
 		}
 	protected:
 		void next() {
@@ -81,12 +95,12 @@ private:
 					throw std::invalid_argument("next doesn't exist");
 				}
 				index = pos[level].first + 1;
-				if (index < pos[level - 1].second.get().size()) {
+				if (index <= keys(pos[level - 1].second.get()).size()) {
 					break;
 				}
 			}
 			for (; level < pos.size(); level++, index = 0) {
-				pos[level] = std::make_pair(index, node_cache->read(pos[level - 1].second.get()[index].second));
+				pos[level] = std::make_pair(index, node_cache->read(child_ref(pos[level - 1].second.get(), index)));
 			}
 		}
 		void prev() {
@@ -101,8 +115,8 @@ private:
 					break;
 				}
 			}
-			for (; level < pos.size(); level++, index = pos[level - 1].second.get().size()) {
-				pos[level] = std::make_pair(index - 1, node_cache->read(pos[level - 1].second.get()[index - 1].second));
+			for (index--; level < pos.size(); level++, index = keys(pos[level - 1].second.get()).size()) {
+				pos[level] = std::make_pair(index, node_cache->read(child_ref(pos[level - 1].second.get(), index)));
 			}
 		}
 	};
@@ -112,7 +126,7 @@ private:
 		friend class Tree;
 	private:
 		leaf_iterator(LeafCache& leaf_cache, block_ref root) : node_iterator(), leaf_cache(nullptr), leaf_index(0), leaf(leaf_cache.read(std::move(root))) {}
-		leaf_iterator(node_iterator it, LeafCache& leaf_cache, size_t leaf_index) : node_iterator(std::move(it)), leaf_cache(&leaf_cache), leaf_index(leaf_index), leaf(leaf_cache.read(node_iterator::get()[leaf_index].second)) {}
+		leaf_iterator(node_iterator it, LeafCache& leaf_cache, size_t leaf_index) : node_iterator(std::move(it)), leaf_cache(&leaf_cache), leaf_index(leaf_index), leaf(leaf_cache.read(child_ref(node_iterator::get(), leaf_index))) {}
 	private:
 		LeafCache* leaf_cache;
 		size_t leaf_index;
@@ -128,12 +142,12 @@ private:
 				throw std::invalid_argument("next doesn't exist");
 			}
 			size_t index = leaf_index + 1;
-			if (index >= node_iterator::get().size()) {
+			if (index > keys(node_iterator::get()).size()) {
 				node_iterator::next();
 				index = 0;
 			}
 			leaf_index = index;
-			leaf = leaf_cache->read(node_iterator::get()[leaf_index].second);
+			leaf = leaf_cache->read(child_ref(node_iterator::get(), leaf_index));
 		}
 		void prev() {
 			if (is_root()) {
@@ -141,10 +155,11 @@ private:
 			}
 			if (leaf_index == 0) {
 				node_iterator::prev();
-				leaf_index = node_iterator::get().size();
+				leaf_index = keys(node_iterator::get()).size();
+			} else {
+				leaf_index--;
 			}
-			leaf_index--;
-			leaf = leaf_cache->read(node_iterator::get()[leaf_index].second);
+			leaf = leaf_cache->read(child_ref(node_iterator::get(), leaf_index));
 		}
 	};
 
@@ -280,7 +295,7 @@ private:
 			return root_leaf();
 		} else {
 			for (node_iterator it = root_node();;) {
-				size_t index = f(it.get());
+				size_t index = f(keys(it.get()));
 				if (--level > 0) {
 					it.child(index);
 				} else {
@@ -295,8 +310,8 @@ private:
 	}
 
 private:
-	leaf_iterator leaf_front() const { return find_leaf([](const Node& node) { return 0; }); }
-	leaf_iterator leaf_back() const { return find_leaf([](const Node& node) { return node.size() - 1; }); }
+	leaf_iterator leaf_front() const { return find_leaf([](const NodeKeys& keys) { return 0; }); }
+	leaf_iterator leaf_back() const { return find_leaf([](const NodeKeys& keys) { return keys.size(); }); }
 
 public:
 	iterator begin() const { return find(leaf_front(), [](const Leaf& leaf) { return 0; }); }
@@ -308,16 +323,14 @@ public:
 private:
 	template<class K>
 	leaf_iterator lower_bound_leaf(const K& k) const {
-		return find_leaf([&](const Node& node) {
-			size_t index = std::lower_bound(node.begin(), node.end(), k, [&](const NodeEntry& entry, const K& k) { return comp(key(entry), k); }) - node.begin();
-			return index > 0 ? index - 1 : index;
+		return find_leaf([&](const NodeKeys& keys) {
+			return std::lower_bound(keys.begin(), keys.end(), k, [&](const NodeEntry& entry, const K& k) { return comp(key(entry), k); }) - keys.begin();
 		});
 	}
 	template<class K>
 	leaf_iterator upper_bound_leaf(const K& k) const {
-		return find_leaf([&](const Node& node) {
-			size_t index = std::upper_bound(node.begin(), node.end(), k, [&](const K& k, const NodeEntry& entry) { return comp(k, key(entry)); }) - node.begin();
-			return index > 0 ? index - 1 : index;
+		return find_leaf([&](const NodeKeys& keys) {
+			return std::upper_bound(keys.begin(), keys.end(), k, [&](const K& k, const NodeEntry& entry) { return comp(k, key(entry)); }) - keys.begin();
 		});
 	}
 
@@ -345,11 +358,11 @@ public:
 	}
 
 private:
-	static bool node_should_split(const Node& node) {
-		return node.size() > 3;
+	static bool node_should_split(const NodeKeys& keys) {
+		return keys.size() > 2;
 	}
-	static bool node_should_merge(const Node& node) {
-		return node.size() < 2;
+	static bool node_should_merge(const NodeKeys& keys) {
+		return keys.size() < 1;
 	}
 	static bool leaf_should_split(const Leaf& leaf) {
 		return leaf.size() > 3;
@@ -359,11 +372,12 @@ private:
 	}
 
 private:
-	static Node split_node(Node& node) {
-		size_t index = node.size() / 2;
-		Node next(std::make_move_iterator(node.begin() + index), std::make_move_iterator(node.end()));
-		node.erase(node.begin() + index, node.end());
-		return next;
+	static std::pair<Key, Node> split_node(NodeKeys& keys) {
+		size_t index = keys.size() / 2;
+		Key next_key = std::move(keys[index].first);
+		Node next = std::make_pair(std::move(keys[index].second), NodeKeys(std::make_move_iterator(keys.begin() + index + 1), std::make_move_iterator(keys.end())));
+		keys.erase(keys.begin() + index, keys.end());
+		return std::make_pair(std::move(next_key), std::move(next));
 	}
 
 	static Leaf split_leaf(Leaf& leaf) {
@@ -374,45 +388,20 @@ private:
 	}
 
 private:
-	void update_node_key(node_iterator it, const Key& key) {
-		if (it.is_root()) {
-		} else {
-			size_t node_index = it.node_index(); it.parent();
-			it.node().update([&](Node& node) {
-				node[node_index].first = key;
-				if (node_index == 0) {
-					update_node_key(std::move(it), key);
-				}
-			});
-		}
-	}
-
-	void update_leaf_key(leaf_iterator it, const Key& key) {
-		if (it.is_root()) {
-		} else {
-			it.node().update([&](Node& node) {
-				node[it.leaf_index].first = key;
-				if (it.leaf_index == 0) {
-					update_node_key(std::move(it), key);
-				}
-			});
-		}
-	}
-
-private:
 	template<class K>
 	void insert_node_after(node_iterator it, const K& k, NodeEntry entry) {
 		if (it.is_root()) {
 			meta.update([&](Meta& meta) {
-				meta.first = node_cache.create(Node{ std::make_pair(key(it.get()[0]), block_ref(it.node())), std::move(entry) }).drop();
+				meta.first = node_cache.create(std::make_pair(block_ref(it.node()), NodeKeys{ std::move(entry) })).drop();
 				meta.second++;
 			});
 		} else {
 			size_t node_index = it.node_index(); it.parent();
 			it.node().update([&](Node& node) {
-				node.emplace(node.begin() + node_index + 1, std::move(entry));
-				if (node_should_split(node)) {
-					Node next = split_node(node); Key next_key = key(next.front());
+				auto& node_keys = keys(node);
+				node_keys.emplace(node_keys.begin() + node_index, std::move(entry));
+				if (node_should_split(node_keys)) {
+					auto [next_key, next] = split_node(node_keys);
 					insert_node_after(std::move(it), k, std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
 				}
 			});
@@ -423,14 +412,15 @@ private:
 	void insert_leaf_after(leaf_iterator it, const K& k, NodeEntry entry) {
 		if (it.is_root()) {
 			meta.update([&](Meta& meta) {
-				meta.first = node_cache.create(Node{ std::make_pair(key(it.get()[0]), block_ref(it.leaf)), std::move(entry) }).drop();
+				meta.first = node_cache.create(std::make_pair(block_ref(it.leaf), NodeKeys{ std::move(entry) })).drop();
 				meta.second++;
 			});
 		} else {
 			it.node().update([&](Node& node) {
-				node.emplace(node.begin() + it.leaf_index + 1, std::move(entry));
-				if (node_should_split(node)) {
-					Node next = split_node(node); Key next_key = key(next.front());
+				auto& node_keys = keys(node);
+				node_keys.emplace(node_keys.begin() + it.leaf_index, std::move(entry));
+				if (node_should_split(node_keys)) {
+					auto [next_key, next] = split_node(node_keys);
 					insert_node_after(std::move(it), k, std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
 				}
 			});
@@ -441,9 +431,6 @@ private:
 	void insert(iterator it, const K& k, LeafEntry entry) {
 		it.leaf.update([&](Leaf& leaf) {
 			leaf.emplace(leaf.begin() + it.index, std::move(entry));
-			if (it.index == 0) {
-				update_leaf_key(it, key(leaf.front()));
-			}
 			if (leaf_should_split(leaf)) {
 				Leaf next = split_leaf(leaf); Key next_key = key(next.front());
 				insert_leaf_after(std::move(it), k, std::make_pair(std::move(next_key), leaf_cache.create(std::move(next)).drop()));
