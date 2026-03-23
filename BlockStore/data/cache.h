@@ -130,7 +130,7 @@ private:
 		}
 	}
 	const T& lookup_write(block<T>& ref, auto&&... args) {
-		return transaction([&]() -> decltype(auto) {
+		return transaction([&] -> decltype(auto) {
 			if (has(ref)) {
 				auto& object = get(ref);
 				object = T(std::forward<decltype(args)>(args)...);
@@ -144,7 +144,7 @@ private:
 		});
 	}
 	const T& update(ref_t ref, const T& object, auto f) {
-		return transaction([&]() -> decltype(auto) {
+		return transaction([&] -> decltype(auto) {
 			f(const_cast<T&>(object));
 			mark(ref);
 			return object;
@@ -170,7 +170,7 @@ private:
 public:
 	decltype(auto) transaction(auto f) {
 		if constexpr (std::is_void_v<std::invoke_result_t<decltype(f)>>) {
-			manager.transaction([&]() {
+			manager.transaction([&] {
 				transaction_level++;
 				f();
 				transaction_level--;
@@ -182,7 +182,7 @@ public:
 				end_commit();
 			}
 		} else {
-			decltype(auto) res = manager.transaction([&]() -> decltype(auto) {
+			decltype(auto) res = manager.transaction([&] -> decltype(auto) {
 				transaction_level++;
 				decltype(auto) res = f();
 				transaction_level--;
@@ -288,7 +288,7 @@ protected:
 	}
 	template<class T>
 	const T& lookup_write(block<T>& ref, auto&&... args) {
-		return transaction([&]() -> decltype(auto) {
+		return transaction([&] -> decltype(auto) {
 			if (has(ref)) {
 				auto& object = get<T>(ref);
 				object = T(std::forward<decltype(args)>(args)...);
@@ -303,7 +303,7 @@ protected:
 	}
 	template<class T>
 	const T& update(ref_t ref, const T& object, auto f) {
-		return transaction([&]() -> decltype(auto) {
+		return transaction([&] -> decltype(auto) {
 			f(const_cast<T&>(object));
 			mark(ref);
 			return object;
@@ -333,7 +333,7 @@ private:
 public:
 	decltype(auto) transaction(auto f) {
 		if constexpr (std::is_void_v<std::invoke_result_t<decltype(f)>>) {
-			manager.transaction([&]() {
+			manager.transaction([&] {
 				transaction_level++;
 				f();
 				transaction_level--;
@@ -345,7 +345,7 @@ public:
 				end_commit();
 			}
 		} else {
-			decltype(auto) res = manager.transaction([&]() -> decltype(auto) {
+			decltype(auto) res = manager.transaction([&] -> decltype(auto) {
 				transaction_level++;
 				decltype(auto) res = f();
 				transaction_level--;
@@ -416,8 +416,8 @@ public:
 	const T& get() const { if (!object) { object.emplace(block<T>::read()); } return *object; }
 	const T& get(auto init) const { if (!object) { object.emplace(block<T>::read(std::forward<decltype(init)>(init))); } return *object; }
 	const T& set(auto&&... args) { object.emplace(std::forward<decltype(args)>(args)...); block<T>::write(*object); return *object; }
-	const T& update(auto f) { const T& val = get(); f(const_cast<T&>(*object)); block<T>::write(*object); return val; }
-	const T& update(auto f, auto init) { const T& val = get(std::forward<decltype(init)>(init)); f(const_cast<T&>(*object)); block<T>::write(*object); return val; }
+	const T& update(auto f) { return block_ref::get_manager().transaction([&] -> decltype(auto) { const T& val = get(); f(const_cast<T&>(*object)); block<T>::write(*object); return val; }); }
+	const T& update(auto f, auto init) { return block_ref::get_manager().transaction([&] -> decltype(auto) { const T& val = get(std::forward<decltype(init)>(init)); f(const_cast<T&>(*object)); block<T>::write(*object); return val; }); }
 };
 
 template<class T>
