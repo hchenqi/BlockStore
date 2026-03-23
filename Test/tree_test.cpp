@@ -14,13 +14,13 @@ inline void print(const auto& container, auto get = [](const auto& i) { return i
 	}
 	std::cout << std::endl;
 
-	if constexpr (reversible<decltype(container)>) {
-		for (auto i : reverse(container)) {
-			std::cout << get(i) << ' ';
-		}
-		std::cout << std::endl;
-		std::cout << std::endl;
-	}
+	// if constexpr (reversible<decltype(container)>) {
+	// 	for (auto i : reverse(container)) {
+	// 		std::cout << get(i) << ' ';
+	// 	}
+	// 	std::cout << std::endl;
+	// 	std::cout << std::endl;
+	// }
 }
 
 
@@ -112,6 +112,11 @@ int main() {
 			print(set);
 		}
 
+		while (!set.empty()) {
+			set.erase(set.begin());
+			print(set);
+		}
+
 		set.clear();
 		print(set);
 	}
@@ -125,6 +130,11 @@ int main() {
 		std::deque<std::string> values = { "6", "4", "7", "3", "1", "5", "2", "9", "8" };
 		while (!values.empty()) {
 			set.insert(cache.create<std::string>(values.front()).drop()); values.pop_front();
+			print<std::string>(set);
+		}
+
+		while (!set.empty()) {
+			set.erase(set.begin());
 			print<std::string>(set);
 		}
 

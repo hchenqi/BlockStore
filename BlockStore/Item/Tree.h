@@ -36,6 +36,7 @@ private:
 	using Node = TreeNode<Key>;
 	using LeafEntry = TreeLeafEntry<Key, Value>;
 	using Leaf = TreeLeaf<Key, Value>;
+
 protected:
 	using NodeCache = Cache<Node>;
 	using LeafCache = Cache<Leaf>;
@@ -50,6 +51,7 @@ private:
 	static const block_ref& child_ref(const Node& node, size_t index) {
 		return index == 0 ? node.first : keys(node)[index - 1].second;
 	}
+
 private:
 	static const Key& key(const NodeEntry& entry) {
 		return entry.first;
@@ -288,6 +290,9 @@ private:
 		return leaf_iterator(leaf_cache, meta.get().first);
 	}
 
+public:
+	bool empty() const { return depth() == 0 && root_leaf().get().size() == 0; }
+
 private:
 	leaf_iterator find_leaf(auto f) const {
 		size_t level = depth();
@@ -361,14 +366,8 @@ private:
 	static bool node_should_split(const NodeKeys& keys) {
 		return keys.size() > 2;
 	}
-	static bool node_should_merge(const NodeKeys& keys) {
-		return keys.size() < 1;
-	}
 	static bool leaf_should_split(const Leaf& leaf) {
 		return leaf.size() > 3;
-	}
-	static bool leaf_should_merge(const Leaf& leaf) {
-		return leaf.size() < 2;
 	}
 
 private:
@@ -379,7 +378,6 @@ private:
 		keys.erase(keys.begin() + index, keys.end());
 		return std::make_pair(std::move(next_key), std::move(next));
 	}
-
 	static Leaf split_leaf(Leaf& leaf) {
 		size_t index = leaf.size() / 2;
 		Leaf next(std::make_move_iterator(leaf.begin() + index), std::make_move_iterator(leaf.end()));
@@ -388,69 +386,99 @@ private:
 	}
 
 private:
-	template<class K>
-	void insert_node_after(node_iterator it, const K& k, NodeEntry entry) {
-		if (it.is_root()) {
-			meta.update([&](Meta& meta) {
-				meta.first = node_cache.create(std::make_pair(block_ref(it.node()), NodeKeys{ std::move(entry) })).drop();
-				meta.second++;
-			});
-		} else {
-			size_t node_index = it.node_index(); it.parent();
-			it.node().update([&](Node& node) {
-				auto& node_keys = keys(node);
-				node_keys.emplace(node_keys.begin() + node_index, std::move(entry));
-				if (node_should_split(node_keys)) {
-					auto [next_key, next] = split_node(node_keys);
-					insert_node_after(std::move(it), k, std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
-				}
-			});
-		}
+	void insert_root(block_ref first, NodeEntry second) {
+		meta.update([&](Meta& meta) {
+			meta.first = node_cache.create(std::make_pair(std::move(first), NodeKeys{ std::move(second) })).drop();
+			meta.second++;
+		});
 	}
-
-	template<class K>
-	void insert_leaf_after(leaf_iterator it, const K& k, NodeEntry entry) {
-		if (it.is_root()) {
-			meta.update([&](Meta& meta) {
-				meta.first = node_cache.create(std::make_pair(block_ref(it.leaf), NodeKeys{ std::move(entry) })).drop();
-				meta.second++;
-			});
-		} else {
-			it.node().update([&](Node& node) {
-				auto& node_keys = keys(node);
-				node_keys.emplace(node_keys.begin() + it.leaf_index, std::move(entry));
-				if (node_should_split(node_keys)) {
-					auto [next_key, next] = split_node(node_keys);
-					insert_node_after(std::move(it), k, std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
-				}
-			});
-		}
-	}
-
-	template<class K>
-	void insert(iterator it, const K& k, LeafEntry entry) {
-		it.leaf.update([&](Leaf& leaf) {
-			leaf.emplace(leaf.begin() + it.index, std::move(entry));
-			if (leaf_should_split(leaf)) {
-				Leaf next = split_leaf(leaf); Key next_key = key(next.front());
-				insert_leaf_after(std::move(it), k, std::make_pair(std::move(next_key), leaf_cache.create(std::move(next)).drop()));
+	void insert_node_entry(node_iterator it, size_t index, NodeEntry entry) {
+		it.node().update([&](Node& node) {
+			auto& node_keys = keys(node);
+			node_keys.emplace(node_keys.begin() + index, std::move(entry));
+			if (node_should_split(node_keys)) {
+				auto [next_key, next] = split_node(node_keys);
+				insert_node_after(std::move(it), std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
 			}
 		});
 	}
 
+private:
+	void insert_node_after(node_iterator it, NodeEntry entry) {
+		if (it.is_root()) {
+			insert_root(it.node(), std::move(entry));
+		} else {
+			size_t node_index = it.node_index(); it.parent();
+			insert_node_entry(std::move(it), node_index, std::move(entry));
+		}
+	}
+	void insert_leaf_after(leaf_iterator it, NodeEntry entry) {
+		if (it.is_root()) {
+			insert_root(it.leaf, std::move(entry));
+		} else {
+			size_t leaf_index = it.leaf_index;
+			insert_node_entry(std::move(it), leaf_index, std::move(entry));
+		}
+	}
+
 public:
+	void insert(iterator it, LeafEntry entry) {
+		it.leaf.update([&](Leaf& leaf) {
+			leaf.emplace(leaf.begin() + it.index, std::move(entry));
+			if (leaf_should_split(leaf)) {
+				Leaf next = split_leaf(leaf); Key next_key = key(next.front());
+				insert_leaf_after(std::move(it), std::make_pair(std::move(next_key), leaf_cache.create(std::move(next)).drop()));
+			}
+		});
+	}
 	template<class K>
 	void insert(const K& k, LeafEntry entry) {
-		insert(upper_bound(k), k, std::move(entry));
+		insert(upper_bound(k), std::move(entry));
 	}
 
-	void erase(iterator begin, iterator end) {
-
+private:
+	void erase_node_entry(node_iterator it, size_t index) {
+		it.node().update([&](Node& node) {
+			auto& node_keys = keys(node);
+			if (index == 0) {
+				if (node_keys.empty()) {
+					erase_node(std::move(it));
+				} else {
+					node.first = std::move(node_keys.front().second);
+					node_keys.erase(node_keys.begin());
+				}
+			} else {
+				node_keys.erase(node_keys.begin() + index - 1);
+			}
+		});
 	}
 
-	template<class K>
-	void erase(const K& k) {
-		erase(lower_bound(k), upper_bound(k));
+private:
+	void erase_node(node_iterator it) {
+		if (it.is_root()) {
+			meta.update([&](Meta& meta) { meta = std::make_pair(leaf_cache.create().drop(), 0); });
+		} else {
+			size_t node_index = it.node_index(); it.parent();
+			erase_node_entry(std::move(it), node_index);
+		}
+	}
+	void erase_leaf(leaf_iterator it) {
+		if (it.is_root()) {
+		} else {
+			size_t leaf_index = it.leaf_index;
+			erase_node_entry(std::move(it), leaf_index);
+		}
+	}
+
+public:
+	void erase(iterator it) {
+		it.normalize();
+		it.leaf.update([&](Leaf& leaf) {
+			leaf.erase(leaf.begin() + it.index);
+			if (leaf.empty()) {
+				erase_leaf(std::move(it));
+			}
+		});
 	}
 };
 
