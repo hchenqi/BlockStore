@@ -431,10 +431,6 @@ public:
 			}
 		});
 	}
-	template<class K>
-	void insert(const K& k, LeafEntry entry) {
-		insert(upper_bound(k), std::move(entry));
-	}
 
 private:
 	void erase_node_entry(node_iterator it, size_t index) {
