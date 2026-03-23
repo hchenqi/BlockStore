@@ -1,27 +1,10 @@
 #pragma once
 
 #include "Tree.h"
+#include "../utility/key_ref_comp.h"
 
 
 namespace BlockStore {
-
-
-template<class Key, template<class T> class Cache>
-class KeyRefComp {
-private:
-	using KeyCache = Cache<Key>;
-public:
-	KeyRefComp(KeyCache& cache) :cache(cache) {}
-private:
-	KeyCache& cache;
-public:
-	bool operator()(const block<Key>& ref, const Key& key) const {
-		return cache.read(ref).get() < key;
-	}
-	bool operator()(const Key& key, const block<Key>& ref) const {
-		return key < cache.read(ref).get();
-	}
-};
 
 
 template<class Key>
@@ -51,11 +34,17 @@ public:
 		return it != Base::end() && key_cache.read(*it).get() == key;
 	}
 
-	void insert(const Key& key) {
-		Base::insert(Base::upper_bound(key), key_cache.create(key).drop());
+	void insert(Key key) {
+		auto it = Base::lower_bound(key);
+		if (it != Base::end() && key_cache.read(*it).get() == key) {
+			throw std::invalid_argument("key already exists");
+		}
+		Base::insert(std::move(it), key_cache.create(std::move(key)).drop());
 	}
 
-	void erase_one(const Key& key) {
+	using Base::erase;
+
+	void erase(const Key& key) {
 		auto it = Base::lower_bound(key);
 		if (it == Base::end() || key_cache.read(*it).get() != key) {
 			throw std::invalid_argument("key doesn't exist");
