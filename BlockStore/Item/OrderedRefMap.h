@@ -31,22 +31,18 @@ private:
 	ValueCache& value_cache;
 
 public:
-	bool contains(const Key& key) {
+	bool contains(const Key& key) const {
 		auto it = Base::lower_bound(key);
 		return it != Base::end() && key_cache.read((*it).first).get() == key;
 	}
 
-	block_view<Value, ValueCache> at(const Key& key) {
-		auto it = Base::lower_bound(key);
-		if (it == Base::end() || key_cache.read((*it).first).get() != key) {
-			throw std::invalid_argument("key doesn't exist");
-		}
-		return value_cache.read((*it).second);
+	bool equal(Base::iterator it, const Key& key) const {
+		return it != Base::end() && key_cache.read((*it).first).get() == key;
 	}
 
 	void insert(Key key, Value value) {
 		auto it = Base::lower_bound(key);
-		if (it != Base::end() && key_cache.read((*it).first).get() == key) {
+		if (equal(it, key)) {
 			throw std::invalid_argument("key already exists");
 		}
 		Base::insert(std::move(it), std::make_pair(key_cache.create(std::move(key)).drop(), value_cache.create(std::move(value)).drop()));
@@ -60,6 +56,14 @@ public:
 			throw std::invalid_argument("key doesn't exist");
 		}
 		Base::erase(std::move(it));
+	}
+
+	block_view<Value, ValueCache> at(const Key& key) {
+		auto it = Base::lower_bound(key);
+		if (it == Base::end() || key_cache.read((*it).first).get() != key) {
+			throw std::invalid_argument("key doesn't exist");
+		}
+		return value_cache.read((*it).second);
 	}
 };
 

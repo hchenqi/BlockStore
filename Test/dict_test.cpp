@@ -48,11 +48,29 @@ void print(const auto& container) {
 }
 
 
+template<class T>
+struct CacheType {
+	using Type = BlockCacheDynamicAdapter<T>;
+};
+
+template<>
+struct CacheType<std::string> {
+	using Type = BlockCache<std::string>;
+};
+
+template<class T>
+using Cache = CacheType<T>::Type;
+
+
 int main() {
 	BlockManager block_manager("dict_test.db");
-	BlockCacheDynamic cache(block_manager);
 
-	OrderedRefMap<std::string, std::string, BlockCacheDynamicAdapter> map(cache, cache, cache, cache, block_manager.get_root());
+	BlockCacheDynamic node_cache(block_manager);
+	BlockCacheDynamic leaf_cache(block_manager);
+	BlockCache<std::string> key_cache(block_manager);
+	BlockCache<std::string> value_cache(block_manager);
+
+	OrderedRefMap<std::string, std::string, Cache> map(node_cache, leaf_cache, key_cache, value_cache, block_manager.get_root());
 
 	for (;;) {
 		std::cout << "> ";
@@ -70,30 +88,30 @@ int main() {
 		try {
 			if (arg[0] == "exit" || arg[0] == "quit") {
 				break;
-			} else if (arg[0] == "insert") {
+			} else if (arg[0] == "insert" || arg[0] == "i") {
 				if (arg.size() != 3) {
 					throw std::invalid_argument("insert requires \"key\" \"value\"");
 				}
 				map.insert(arg[1], arg[2]);
 				std::cout << "inserted\n";
-			} else if (arg[0] == "delete") {
+			} else if (arg[0] == "delete" || arg[0] == "d") {
 				if (arg.size() != 2) {
 					throw std::invalid_argument("delete requires \"key\"");
 				}
 				map.erase(arg[1]);
 				std::cout << "deleted\n";
-			} else if (arg[0] == "get") {
+			} else if (arg[0] == "get" || arg[0] == "g") {
 				if (arg.size() != 2) {
 					throw std::invalid_argument("get requires \"key\"");
 				}
 				std::cout << map.at(arg[1]).get() << std::endl;
-			} else if (arg[0] == "set") {
+			} else if (arg[0] == "set" || arg[0] == "s") {
 				if (arg.size() != 3) {
 					throw std::invalid_argument("set requires \"key\" \"value\"");
 				}
 				map.at(arg[1]).set(arg[2]);
 				std::cout << "updated\n";
-			} else if (arg[0] == "list") {
+			} else if (arg[0] == "list" || arg[0] == "l") {
 				print(map);
 			} else {
 				std::cout << "unknown command: " << arg[0] << std::endl;

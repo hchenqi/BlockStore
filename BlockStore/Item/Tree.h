@@ -180,20 +180,20 @@ public:
 	private:
 		size_t index;
 	private:
-		bool is_end() const { return index >= leaf_iterator::get().size(); }
+		bool is_leaf_end() const { return index >= leaf_iterator::get().size(); }
 	private:
-		void normalize() const {
-			if (is_end()) {
-				const_cast<iterator&>(*this).leaf_iterator::next();
-				const_cast<iterator&>(*this).index = 0;
+		void normalize() {
+			if (is_leaf_end()) {
+				leaf_iterator::next();
+				index = 0;
 			}
 		}
 	public:
-		bool operator==(const iterator& other) const {
+		bool operator==(iterator& other) {
 			if (leaf_iterator::operator==(other)) {
 				return index == other.index;
 			}
-			if (is_end()) {
+			if (is_leaf_end()) {
 				if (other.index == 0) {
 					try {
 						normalize();
@@ -204,7 +204,7 @@ public:
 				} else {
 					return false;
 				}
-			} else if (other.is_end()) {
+			} else if (other.is_leaf_end()) {
 				if (index == 0) {
 					try {
 						other.normalize();

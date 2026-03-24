@@ -29,14 +29,18 @@ private:
 	KeyCache& key_cache;
 
 public:
-	bool contains(const Key& key) {
+	bool contains(const Key& key) const {
 		auto it = Base::lower_bound(key);
+		return it != Base::end() && key_cache.read(*it).get() == key;
+	}
+
+	bool equal(Base::iterator it, const Key& key) const {
 		return it != Base::end() && key_cache.read(*it).get() == key;
 	}
 
 	void insert(Key key) {
 		auto it = Base::lower_bound(key);
-		if (it != Base::end() && key_cache.read(*it).get() == key) {
+		if (equal(it, key)) {
 			throw std::invalid_argument("key already exists");
 		}
 		Base::insert(std::move(it), key_cache.create(std::move(key)).drop());

@@ -21,14 +21,18 @@ public:
 	UnorderedRefSet(NodeCache& node_cache, LeafCache& leaf_cache, block_ref meta) : Base(node_cache, leaf_cache, std::move(meta), std::less<block_ref>()) {}
 
 public:
-	bool contains(const block_ref& ref) {
+	bool contains(const block_ref& ref) const {
 		auto it = Base::lower_bound(ref);
+		return it != Base::end() && *it == ref;
+	}
+
+	bool equal(Base::iterator it, const block_ref& ref) const {
 		return it != Base::end() && *it == ref;
 	}
 
 	void insert(block_ref ref) {
 		auto it = Base::lower_bound(ref);
-		if (it != Base::end() && *it == ref) {
+		if (equal(it, ref)) {
 			throw std::invalid_argument("ref already exists");
 		}
 		Base::insert(std::move(it), std::move(ref));

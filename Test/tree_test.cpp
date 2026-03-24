@@ -37,7 +37,7 @@ int main() {
 		OrderedRefSet<std::string, BlockCacheDynamicAdapter> set(cache, cache, cache, block_manager.get_root());
 		print(set);
 
-		std::deque<std::string> values = { "6", "4", "7", "3", "1", "5", "2", "9", "8" };
+		std::deque<std::string> values = { "1", "2", "5", "6", "3", "4" };
 		while (!values.empty()) {
 			set.insert(values.front()); values.pop_front();
 			print(set);
