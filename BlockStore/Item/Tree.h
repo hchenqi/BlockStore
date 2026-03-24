@@ -27,6 +27,17 @@ template<class Key, class Value>
 using TreeLeaf = std::vector<TreeLeafEntry<Key, Value>>;
 
 
+template<class Key, class Value>
+struct TreeSplitControl {
+	static bool node_should_split(const auto& keys) {
+		return keys.size() > 2;
+	}
+	static bool leaf_should_split(const auto& leaf) {
+		return leaf.size() > 3;
+	}
+};
+
+
 template<class Key, class Value, class Comp, template<class T> class Cache>
 class Tree {
 private:
@@ -36,6 +47,9 @@ private:
 	using Node = TreeNode<Key>;
 	using LeafEntry = TreeLeafEntry<Key, Value>;
 	using Leaf = TreeLeaf<Key, Value>;
+
+private:
+	using SplitControl = TreeSplitControl<Key, Value>;
 
 protected:
 	using NodeCache = Cache<Node>;
@@ -363,14 +377,6 @@ public:
 	}
 
 private:
-	static bool node_should_split(const NodeKeys& keys) {
-		return keys.size() > 2;
-	}
-	static bool leaf_should_split(const Leaf& leaf) {
-		return leaf.size() > 3;
-	}
-
-private:
 	static std::pair<Key, Node> split_node(NodeKeys& keys) {
 		size_t index = keys.size() / 2;
 		Key next_key = std::move(keys[index].first);
@@ -396,7 +402,7 @@ private:
 		it.node().update([&](Node& node) {
 			auto& node_keys = keys(node);
 			node_keys.emplace(node_keys.begin() + index, std::move(entry));
-			if (node_should_split(node_keys)) {
+			if (SplitControl::node_should_split(node_keys)) {
 				auto [next_key, next] = split_node(node_keys);
 				insert_node_after(std::move(it), std::make_pair(std::move(next_key), node_cache.create(std::move(next)).drop()));
 			}
@@ -425,7 +431,7 @@ public:
 	void insert(iterator it, LeafEntry entry) {
 		it.leaf.update([&](Leaf& leaf) {
 			leaf.emplace(leaf.begin() + it.index, std::move(entry));
-			if (leaf_should_split(leaf)) {
+			if (SplitControl::leaf_should_split(leaf)) {
 				Leaf next = split_leaf(leaf); Key next_key = key(next.front());
 				insert_leaf_after(std::move(it), std::make_pair(std::move(next_key), leaf_cache.create(std::move(next)).drop()));
 			}

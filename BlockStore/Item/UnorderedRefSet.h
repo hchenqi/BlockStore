@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Tree.h"
+#include "../utility/ref_split_control.h"
 
 
 namespace BlockStore {

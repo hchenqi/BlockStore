@@ -2,6 +2,7 @@
 
 #include "Tree.h"
 #include "../utility/key_ref_comp.h"
+#include "../utility/ref_split_control.h"
 
 
 namespace BlockStore {
