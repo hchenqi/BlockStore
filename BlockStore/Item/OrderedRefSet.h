@@ -17,7 +17,7 @@ using OrderedRefSetLeaf = TreeLeaf<block<Key>, void>;
 
 template<class Key, template<class T> class Cache>
 class OrderedRefSet : public Tree<block<Key>, void, KeyRefComp<Key, Cache>, Cache> {
-private:
+protected:
 	using Base = Tree<block<Key>, void, KeyRefComp<Key, Cache>, Cache>;
 	using NodeCache = Base::NodeCache;
 	using LeafCache = Base::LeafCache;
@@ -26,7 +26,7 @@ private:
 public:
 	OrderedRefSet(NodeCache& node_cache, LeafCache& leaf_cache, KeyCache& key_cache, block_ref meta) : Base(node_cache, leaf_cache, std::move(meta), KeyRefComp<Key, Cache>(key_cache)), key_cache(key_cache) {}
 
-private:
+protected:
 	KeyCache& key_cache;
 
 public:
