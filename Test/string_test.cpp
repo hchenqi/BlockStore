@@ -51,7 +51,7 @@ int main() {
 			break;
 		}
 
-		block<std::string> block = string_table.insert(str);
+		auto block = string_table.insert(str);
 		std::cout << block << ": " << str << std::endl;
 	}
 

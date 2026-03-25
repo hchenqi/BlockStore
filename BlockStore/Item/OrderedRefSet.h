@@ -17,7 +17,7 @@ using OrderedRefSetLeaf = TreeLeaf<block<Key>, void>;
 
 template<class Key, template<class T> class Cache>
 class OrderedRefSet : public Tree<block<Key>, void, KeyRefComp<Key, Cache>, Cache> {
-protected:
+public:
 	using Base = Tree<block<Key>, void, KeyRefComp<Key, Cache>, Cache>;
 	using NodeCache = Base::NodeCache;
 	using LeafCache = Base::LeafCache;
@@ -35,30 +35,38 @@ public:
 		return it != Base::end() && key_cache.read(*it).get() == key;
 	}
 
-	bool equal(Base::iterator it, const Key& key) const {
-		return it != Base::end() && key_cache.read(*it).get() == key;
-	}
-
-	block<Key> insert(Key key) {
-		auto it = Base::lower_bound(key);
-		if (equal(it, key)) {
-			return *it;
+	std::optional<block_view<Key, KeyCache>> compare(Base::iterator it, const Key& key) const {
+		if (it == Base::end()) {
+			return std::nullopt;
+		}
+		block_view<Key, KeyCache> view = key_cache.read(*it);
+		if (view.get() == key) {
+			return std::move(view);
 		} else {
-			block<Key> ref = key_cache.create(std::move(key)).drop();
-			Base::insert(std::move(it), ref);
-			return ref;
+			return std::nullopt;
 		}
 	}
 
-	block<Key> insert(block<Key> ref) {
+	block_view<Key, KeyCache> insert(Key key) {
+		auto it = Base::lower_bound(key);
+		if (auto ret = compare(it, key); ret != std::nullopt) {
+			return std::move(ret.value());
+		} else {
+			block_view<Key, KeyCache> view = key_cache.create(std::move(key));
+			Base::insert(std::move(it), view);
+			return view;
+		}
+	}
+
+	block_view<Key, KeyCache> insert(block<Key> ref) {
 		block_view<Key, KeyCache> view = key_cache.read(ref);
 		const Key& key = view.get();
 		auto it = Base::lower_bound(key);
-		if (equal(it, key)) {
-			return *it;
+		if (auto ret = compare(it, key); ret != std::nullopt) {
+			return std::move(ret.value());
 		} else {
 			Base::insert(std::move(it), std::move(ref));
-			return std::move(view.drop());
+			return view;
 		}
 	}
 
