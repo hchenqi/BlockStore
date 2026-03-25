@@ -1,4 +1,5 @@
 #include "OrderedRefSet.h"
+#include "../utility/type_map.h"
 #include "CppSerialize/stl/variant.h"
 
 
@@ -18,15 +19,15 @@ struct Union : std::vector<block<TypeMeta>> {};
 
 struct TypeMeta : std::variant<Empty, Boolean, Integer, String, Ref, Array, Tuple, Union> {};
 
+
+template<class T>
+struct View;
+
+template<class T>
+using ViewType = typename View<T>::Type;
+
+
 using TypeRegistry = OrderedRefSet<TypeMeta, BlockCacheDynamicAdapter>;
-
-
-struct Root {
-	block_ref type_registry; // TypeRegistry
-	block_ref root; // DynamicView
-
-	friend constexpr auto layout(layout_type<Root>) { return declare(&Root::type_registry, &Root::root); }
-};
 
 
 class DynamicView {
@@ -37,7 +38,7 @@ protected:
 	DynamicView(TypeRegistry& type_registry, TypeView type) : type_registry(type_registry), type(std::move(type)) {}
 
 private:
-	DynamicView* parent;
+	DynamicView* parent = nullptr;
 protected:
 	bool HasParent() const { return parent != nullptr; }
 	DynamicView& GetParent() const { if (!HasParent()) { throw std::invalid_argument("parent doesn't exist"); } return *parent; }
@@ -83,42 +84,39 @@ protected:
 protected:
 	std::unique_ptr<DynamicView> ConstructChild(block<TypeMeta> ref) {
 		TypeView meta = type_registry.insert(std::move(ref));
-		std::unique_ptr<DynamicView> child = std::visit([&](const auto& type) { return Construct(type_registry, std::move(meta), type); }, meta.get());
+		std::unique_ptr<DynamicView> child = std::visit([&](const auto& type) {
+			return std::make_unique<ViewType<std::decay_t<decltype(type)>>>(type_registry, std::move(meta));
+		}, meta.get());
 		RegisterChild(*child);
 		return child;
 	}
-private:
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Empty&) {
-		return std::make_unique<EmptyView>(type_registry, std::move(type));
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Boolean&) {
-		return std::make_unique<BooleanView>(type_registry, std::move(type));
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Integer&) {
-		return std::make_unique<IntegerView>(type_registry, std::move(type));
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const String&) {
-		return std::make_unique<StringView>(type_registry, std::move(type));
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Ref&) {
-		return std::make_unique<RefView>(type_registry, std::move(type));
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Array&) {
-		return std::make_unique<ArrayView>(type_registry, std::move(type));
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Tuple& tuple) {
-		return std::make_unique<TupleView>(type_registry, std::move(type), tuple);
-	}
-	static std::unique_ptr<DynamicView> Construct(TypeRegistry& type_registry, TypeView type, const Union&) {
-		return std::make_unique<UnionView>(type_registry, std::move(type));
-	}
 };
 
-class DynamicViewRoot {
-public:
-	DynamicViewRoot(TypeRegistry& type_registry, block_ref root) {
 
-	}
+class DynamicViewControl {
+
+private:
+	
+	
+};
+
+class DynamicViewRoot : public DynamicView {
+private:
+	struct Data {
+		block_ref type_registry;
+		block_ref root;
+
+		friend constexpr auto layout(layout_type<Data>) { return declare(&Data::type_registry, &Data::root); }
+	};
+
+public:
+	DynamicViewRoot(BlockManager& block_manager, BlockCacheDynamic& cache, block_ref root) :
+		DynamicView(type_registry, cache.create)
+		data(BlockCacheLocal<Data>::read(std::move(root), [&]() { return Data{ block_manager.allocate(), block_manager.allocate() }; })),
+		type_registry(cache, cache, cache, data.get().type_registry) {}
+
+	block_view_local<Data> data;
+	TypeRegistry type_registry;
 
 private:
 	std::unique_ptr<DynamicView> root;
@@ -182,7 +180,8 @@ protected:
 
 class TupleView : public DynamicView {
 public:
-	TupleView(TypeRegistry& type_registry, TypeView type, const Tuple& tuple) : DynamicView(type_registry, std::move(type)) {
+	TupleView(TypeRegistry& type_registry, TypeView type) : DynamicView(type_registry, std::move(type)) {
+		const Tuple& tuple = GetType<Tuple>();
 		child_list.reserve(tuple.size());
 		for (const auto& child : tuple) {
 			child_list.emplace_back(ConstructChild(child));
@@ -216,6 +215,23 @@ private:
 
 class UnionView : public DynamicView {
 
+};
+
+
+using TypeViewMap = TypeMap<
+	TypeMapEntry<Empty, EmptyView>,
+	TypeMapEntry<Boolean, BooleanView>,
+	TypeMapEntry<Integer, IntegerView>,
+	TypeMapEntry<String, StringView>,
+	TypeMapEntry<Ref, RefView>,
+	TypeMapEntry<Array, ArrayView>,
+	TypeMapEntry<Tuple, TupleView>,
+	TypeMapEntry<Union, UnionView>
+>;
+
+template<class T>
+struct View {
+	using Type = MappedType<TypeViewMap, T>;
 };
 
 
