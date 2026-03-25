@@ -4,12 +4,22 @@
 using namespace BlockStore;
 
 
+struct Root {
+	block_ref type_registry;
+	block_ref root;
+
+	friend constexpr auto layout(layout_type<Root>) { return declare(&Root::type_registry, &Root::root); }
+};
+
+
 int main() {
 	BlockManager block_manager("dynamic_test.db");
 	BlockCacheDynamic cache(block_manager);
 
-	DynamicViewRoot root(block_manager, cache, block_manager.get_root());
+	block_view_local<Root> root = BlockCacheLocal<Root>::read(block_manager.get_root(), [&]() { return Root{ block_manager.allocate(), block_manager.allocate() }; });
+	TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
 
+	DynamicItem item(type_registry, root.get().root);
 
 	return 0;
 }
