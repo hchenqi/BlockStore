@@ -39,12 +39,27 @@ public:
 		return it != Base::end() && key_cache.read(*it).get() == key;
 	}
 
-	void insert(Key key) {
+	block<Key> insert(Key key) {
 		auto it = Base::lower_bound(key);
 		if (equal(it, key)) {
-			throw std::invalid_argument("key already exists");
+			return *it;
+		} else {
+			block<Key> ref = key_cache.create(std::move(key)).drop();
+			Base::insert(std::move(it), ref);
+			return ref;
 		}
-		Base::insert(std::move(it), key_cache.create(std::move(key)).drop());
+	}
+
+	block<Key> insert(block<Key> ref) {
+		block_view<Key, KeyCache> view = key_cache.read(ref);
+		const Key& key = view.get();
+		auto it = Base::lower_bound(key);
+		if (equal(it, key)) {
+			return *it;
+		} else {
+			Base::insert(std::move(it), std::move(ref));
+			return std::move(view.drop());
+		}
 	}
 
 	using Base::erase;

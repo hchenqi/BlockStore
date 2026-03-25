@@ -1,9 +1,14 @@
-#include "BlockStore/Item/StringTable.h"
+#include "BlockStore/Item/OrderedRefSet.h"
+#include "CppSerialize/stl/string.h"
 
 #include <iostream>
 
 
 using namespace BlockStore;
+
+
+template<template<class T> class Cache>
+using StringTable = OrderedRefSet<std::string, Cache>;
 
 
 template<class T>
