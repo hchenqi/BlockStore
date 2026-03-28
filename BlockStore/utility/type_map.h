@@ -5,10 +5,7 @@ namespace BlockStore {
 
 
 template<class Key, class Value>
-struct TypeMapEntry {
-	using Key = Key;
-	using Value = Value;
-};
+struct TypeMapEntry {};
 
 template<class... Entries>
 struct TypeMap {};

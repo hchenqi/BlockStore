@@ -17,9 +17,13 @@ int main() {
 	BlockCacheDynamic cache(block_manager);
 
 	block_view_local<Root> root = BlockCacheLocal<Root>::read(block_manager.get_root(), [&]() { return Root{ block_manager.allocate(), block_manager.allocate() }; });
-	TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
 
-	DynamicItem item(type_registry, root.get().root);
+	{
+		using namespace Dynamic;
+
+		TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
+		Item item(type_registry, root.get().root);
+	}
 
 	return 0;
 }

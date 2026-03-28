@@ -1,6 +1,7 @@
 #include "OrderedRefSet.h"
 #include "../utility/type_map.h"
 #include "CppSerialize/stl/variant.h"
+#include "CppSerialize/stl/string.h"
 
 
 namespace BlockStore {
@@ -10,23 +11,18 @@ namespace Dynamic {
 
 struct TypeMeta;
 
-struct Empty {};
-struct Boolean {};
-struct Integer {};
-struct String {};
-struct Ref {};
-struct Array : std::pair<size_t, block<TypeMeta>> {};
-struct Tuple : std::vector<block<TypeMeta>> {};
-struct Union : std::vector<block<TypeMeta>> {};
+struct TypeBase { auto operator<=>(const TypeBase&) const = default; };
 
-struct TypeMeta : std::variant<Empty, Boolean, Integer, String, Ref, Array, Tuple, Union> {};
+struct Empty : TypeBase {};
+struct Boolean : TypeBase {};
+struct Integer : TypeBase {};
+struct String : TypeBase {};
+struct Ref : TypeBase {};
+struct Array : std::pair<size_t, block<TypeMeta>> { using layout_base = std::pair<size_t, block<TypeMeta>>; };
+struct Tuple : std::vector<block<TypeMeta>> { using layout_base = std::vector<block<TypeMeta>>; };
+struct Union : std::vector<block<TypeMeta>> { using layout_base = std::vector<block<TypeMeta>>; };
 
-
-template<class T>
-struct View;
-
-template<class T>
-using ViewType = typename View<T>::Type;
+struct TypeMeta : std::variant<Empty, Boolean, Integer, String, Ref, Array, Tuple, Union> { using layout_base = std::variant<Empty, Boolean, Integer, String, Ref, Array, Tuple, Union>; };
 
 
 using TypeRegistry = OrderedRefSet<TypeMeta, BlockCacheDynamicAdapter>;
@@ -68,6 +64,9 @@ protected:
 		read(ref);
 		object = block_ref_deserialize::construct(get_manager(), ref);
 	}
+	void read(auto& object) {
+		layout_traits<std::remove_cvref_t<decltype(object)>>::write([&](auto& item) { read(item); }, object);
+	}
 private:
 	void write_begin() {
 		data.clear();
@@ -88,10 +87,13 @@ protected:
 		write(static_cast<ref_t>(object));
 		ref.push_back(object);
 	}
+	void write(const auto& object) {
+		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { write(item); }, object);
+	}
 };
 
 struct DeserializeContext : ItemData {
-	void access(const auto& object) { read(object); }
+	void access(auto& object) { read(object); }
 };
 
 struct SerializeContext : ItemData {
@@ -130,34 +132,37 @@ private:
 	ViewBase* parent = nullptr;
 	std::unique_ptr<ViewBase> view;
 private:
-	std::unique_ptr<ViewBase> ConstructView(const TypeMeta& type) {
-		return std::visit([&](const auto& type) { return std::make_unique<ViewType<std::remove_cvref_t<decltype(type)>>>(*this); }, type);
-	}
+	std::unique_ptr<ViewBase> ConstructView(const TypeMeta& type);
 private:
-	RootViewControl& AsRoot() { return static_cast<RootViewControl&>(*this); }
+	RootViewControl& AsRoot();
 private:
-	void TypeUpdated() { parent ? parent->OnChildTypeUpdate(*this) : AsRoot().OnTypeUpdate(); }
-	void DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsRoot().OnDataUpdate(); }
+	void TypeUpdated();
+	void DataUpdated();
 private:
-	void Deserialize(DeserializeContext& context) { view->Deserialize(context); }
-	void Serialize(SerializeContext& context) const { view->Serialize(context); }
+	void Deserialize(DeserializeContext& context);
+	void Serialize(SerializeContext& context) const;
 };
 
 class RootViewControl : public ViewControl {
 private:
 	friend class Item;
 	friend class ViewControl;
-public:
+private:
 	RootViewControl(Item& item, TypeRegistry& type_registry, block<TypeMeta> ref) : ViewControl(type_registry, std::move(ref)), item(item) {}
 private:
 	Item& item;
 private:
 	using ViewControl::type;
-	using ViewControl::view;
 private:
-	void OnTypeUpdate() { item.OnTypeUpdate(); }
-	void OnDataUpdate() { item.OnDataUpdate(); }
+	void OnTypeUpdate();
+	void OnDataUpdate();
+private:
+	using ViewControl::Serialize;
+	using ViewControl::Deserialize;
 };
+
+inline RootViewControl& ViewControl::AsRoot() { return static_cast<RootViewControl&>(*this); }
+
 
 class Item {
 private:
@@ -172,7 +177,7 @@ private:
 	block<TypeMeta> DeserializeType() {
 		data.read_begin();
 		block<TypeMeta> type;
-		data.read(type);
+		data.read(static_cast<block_ref&>(type));
 		return type;
 	}
 	void DeserializeData() {
@@ -189,6 +194,9 @@ private:
 	void OnDataUpdate() { Serialize(); }
 };
 
+inline void RootViewControl::OnTypeUpdate() { item.OnTypeUpdate(); }
+inline void RootViewControl::OnDataUpdate() { item.OnDataUpdate(); }
+
 
 class ViewBase {
 private:
@@ -200,12 +208,12 @@ private:
 protected:
 	void RegisterChild(ViewControl& child) { if (child.parent) { throw std::invalid_argument("child already has a parent"); } child.parent = this; }
 	void UnregisterChild(ViewControl& child) { VerifyChild(child); child.parent = nullptr; }
-	void VerifyChild(ViewControl& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
+	void VerifyChild(const ViewControl& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
 protected:
 	ViewControl ConstructChild(block<TypeMeta> ref) { return ViewControl(control.type_registry, std::move(ref)); }
 protected:
 	template<class T> const T& GetType() const { return control.GetType<T>(); }
-	template<class T> void SetType(T type) { return control.SetType<T>(); }
+	template<class T> void SetType(T type) { return control.SetType<T>(std::move(type)); }
 protected:
 	block<TypeMeta> GetChildType(ViewControl& child) const { VerifyChild(child); return child.type; }
 protected:
@@ -215,20 +223,22 @@ protected:
 	virtual void OnChildTypeUpdate(ViewControl& child) {}
 	virtual void OnChildDataUpdate(ViewControl& child) { DataUpdated(); }
 protected:
-	void SerializeChild(SerializeContext& context, ViewControl& child) const { VerifyChild(child); child.Serialize(context); }
+	void SerializeChild(SerializeContext& context, const ViewControl& child) const { VerifyChild(child); child.Serialize(context); }
 	void DeserializeChild(DeserializeContext& context, ViewControl& child) const { VerifyChild(child); child.Deserialize(context); }
 protected:
 	virtual void Deserialize(DeserializeContext& context) {}
 	virtual void Serialize(SerializeContext& context) const {}
 };
 
+inline void ViewControl::TypeUpdated() { parent ? parent->OnChildTypeUpdate(*this) : AsRoot().OnTypeUpdate(); }
+inline void ViewControl::DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsRoot().OnDataUpdate(); }
+inline void ViewControl::Deserialize(DeserializeContext& context) { view->Deserialize(context); }
+inline void ViewControl::Serialize(SerializeContext& context) const { view->Serialize(context); }
+
+
 class EmptyView : public ViewBase {
 public:
 	EmptyView(ViewControl& control) : ViewBase(control) {}
-
-protected:
-	virtual void Deserialize(DeserializeContext& context) override {}
-	virtual void Serialize(SerializeContext& context) const override {}
 };
 
 class BooleanView : public ViewBase {
@@ -285,15 +295,24 @@ protected:
 	std::vector<ViewControl> child_list;
 
 protected:
-	virtual void OnChildTypeUpdate(ViewBase& child) {
+	virtual void OnChildTypeUpdate(ViewControl& child) override {
 		Array type;
 		type.first = child_list.size();
 		type.second = GetChildType(child);
 		SetType(std::move(type));
 	}
 
-	virtual void Deserialize(DeserializeContext& context) override { context.access(value); }
-	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
+private:
+	virtual void Deserialize(DeserializeContext& context) override {
+		for (auto& child : child_list) {
+			DeserializeChild(context, child);
+		}
+	}
+	virtual void Serialize(SerializeContext& context) const override {
+		for (auto& child : child_list) {
+			SerializeChild(context, child);
+		}
+	}
 };
 
 class TupleView : public ViewBase {
@@ -321,17 +340,19 @@ protected:
 private:
 	virtual void Deserialize(DeserializeContext& context) override {
 		for (auto& child : child_list) {
-			DeserializeChild(context, *child);
+			DeserializeChild(context, child);
 		}
 	}
 	virtual void Serialize(SerializeContext& context) const override {
 		for (auto& child : child_list) {
-			SerializeChild(context, *child);
+			SerializeChild(context, child);
 		}
 	}
 };
 
 class UnionView : public ViewBase {
+public:
+	UnionView(ViewControl& control) : ViewBase(control) {}
 
 };
 
@@ -351,6 +372,13 @@ template<class T>
 struct View {
 	using Type = MappedType<TypeViewMap, T>;
 };
+
+template<class T>
+using ViewType = typename View<T>::Type;
+
+inline std::unique_ptr<ViewBase> ViewControl::ConstructView(const TypeMeta& type) {
+	return std::visit([&](const auto& type) -> std::unique_ptr<ViewBase> { return std::make_unique<ViewType<std::remove_cvref_t<decltype(type)>>>(*this); }, type);
+}
 
 
 } // namespace Dynamic
