@@ -48,7 +48,9 @@ private:
 		}
 		index = data.begin();
 	}
-	void read_end() {}
+	void read_end() {
+		assert(index == data.end());
+	}
 protected:
 	void read(layout_trivial auto& object) {
 		if (data.end() < index + sizeof(object)) {
@@ -93,7 +95,7 @@ protected:
 };
 
 struct DeserializeContext : ItemData {
-	void access(auto& object) { read(object); }
+	template<class T> T access() { T object; read(object); return object; }
 };
 
 struct SerializeContext : ItemData {
@@ -108,10 +110,10 @@ private:
 private:
 	using TypeView = block_view<TypeMeta, TypeRegistry::KeyCache>;
 private:
-	ViewControl(TypeRegistry& type_registry, block<TypeMeta> ref) :
+	ViewControl(TypeRegistry& type_registry, block<TypeMeta> ref, DeserializeContext& context) :
 		type_registry(type_registry),
 		type(type_registry.insert(std::move(ref))),
-		view(ConstructView(type.get())) {}
+		view(ConstructView(type.get(), context)) {}
 private:
 	TypeRegistry& type_registry;
 	TypeView type;
@@ -132,14 +134,13 @@ private:
 	ViewBase* parent = nullptr;
 	std::unique_ptr<ViewBase> view;
 private:
-	std::unique_ptr<ViewBase> ConstructView(const TypeMeta& type);
+	std::unique_ptr<ViewBase> ConstructView(const TypeMeta& type, DeserializeContext& context);
 private:
 	RootViewControl& AsRoot();
 private:
 	void TypeUpdated();
 	void DataUpdated();
 private:
-	void Deserialize(DeserializeContext& context);
 	void Serialize(SerializeContext& context) const;
 };
 
@@ -148,7 +149,7 @@ private:
 	friend class Item;
 	friend class ViewControl;
 private:
-	RootViewControl(Item& item, TypeRegistry& type_registry, block<TypeMeta> ref) : ViewControl(type_registry, std::move(ref)), item(item) {}
+	RootViewControl(Item& item, TypeRegistry& type_registry, DeserializeContext& context) : ViewControl(type_registry, context.access<block<TypeMeta>>(), context), item(item) {}
 private:
 	Item& item;
 private:
@@ -158,7 +159,6 @@ private:
 	void OnDataUpdate();
 private:
 	using ViewControl::Serialize;
-	using ViewControl::Deserialize;
 };
 
 inline RootViewControl& ViewControl::AsRoot() { return static_cast<RootViewControl&>(*this); }
@@ -169,19 +169,16 @@ private:
 	friend class RootViewControl;
 	friend class ViewBase;
 public:
-	Item(TypeRegistry& type_registry, block_ref ref) : data(type_registry, std::move(ref)), root(*this, type_registry, DeserializeType()) {}
+	Item(TypeRegistry& type_registry, block_ref ref) : data(type_registry, std::move(ref)), root(*this, type_registry, DeserializeBegin()) { DeserializeEnd(); }
 private:
 	ItemData data;
 	RootViewControl root;
 private:
-	block<TypeMeta> DeserializeType() {
+	DeserializeContext& DeserializeBegin() {
 		data.read_begin();
-		block<TypeMeta> type;
-		data.read(static_cast<block_ref&>(type));
-		return type;
+		return static_cast<DeserializeContext&>(data);
 	}
-	void DeserializeData() {
-		root.Deserialize(static_cast<DeserializeContext&>(data));
+	void DeserializeEnd() {
 		data.read_end();
 	}
 	void Serialize() {
@@ -210,7 +207,7 @@ protected:
 	void UnregisterChild(ViewControl& child) { VerifyChild(child); child.parent = nullptr; }
 	void VerifyChild(const ViewControl& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
 protected:
-	ViewControl ConstructChild(block<TypeMeta> ref) { return ViewControl(control.type_registry, std::move(ref)); }
+	ViewControl ConstructChild(block<TypeMeta> ref, DeserializeContext& context) { ViewControl child(control.type_registry, std::move(ref), context); RegisterChild(child); return child; }
 protected:
 	template<class T> const T& GetType() const { return control.GetType<T>(); }
 	template<class T> void SetType(T type) { return control.SetType<T>(std::move(type)); }
@@ -224,76 +221,67 @@ protected:
 	virtual void OnChildDataUpdate(ViewControl& child) { DataUpdated(); }
 protected:
 	void SerializeChild(SerializeContext& context, const ViewControl& child) const { VerifyChild(child); child.Serialize(context); }
-	void DeserializeChild(DeserializeContext& context, ViewControl& child) const { VerifyChild(child); child.Deserialize(context); }
 protected:
-	virtual void Deserialize(DeserializeContext& context) {}
 	virtual void Serialize(SerializeContext& context) const {}
 };
 
 inline void ViewControl::TypeUpdated() { parent ? parent->OnChildTypeUpdate(*this) : AsRoot().OnTypeUpdate(); }
 inline void ViewControl::DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsRoot().OnDataUpdate(); }
-inline void ViewControl::Deserialize(DeserializeContext& context) { view->Deserialize(context); }
 inline void ViewControl::Serialize(SerializeContext& context) const { view->Serialize(context); }
 
 
 class EmptyView : public ViewBase {
 public:
-	EmptyView(ViewControl& control) : ViewBase(control) {}
+	EmptyView(ViewControl& control, DeserializeContext& context) : ViewBase(control) {}
 };
 
 class BooleanView : public ViewBase {
 public:
-	BooleanView(ViewControl& control) : ViewBase(control) {}
+	BooleanView(ViewControl& control, DeserializeContext& context) : ViewBase(control), value(context.access<bool>()) {}
 protected:
 	bool value;
 protected:
-	virtual void Deserialize(DeserializeContext& context) override { context.access(value); }
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
 };
 
 class IntegerView : public ViewBase {
 public:
-	IntegerView(ViewControl& control) : ViewBase(control) {}
+	IntegerView(ViewControl& control, DeserializeContext& context) : ViewBase(control), value(context.access<uint64>()) {}
 protected:
 	uint64 value;
 protected:
-	virtual void Deserialize(DeserializeContext& context) override { context.access(value); }
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
 };
 
 class StringView : public ViewBase {
 public:
-	StringView(ViewControl& control) : ViewBase(control) {}
+	StringView(ViewControl& control, DeserializeContext& context) : ViewBase(control), value(context.access<std::string>()) {}
 protected:
 	std::string value;
 protected:
-	virtual void Deserialize(DeserializeContext& context) override { context.access(value); }
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
 };
 
 class RefView : public ViewBase {
 public:
-	RefView(ViewControl& control) : ViewBase(control) {}
+	RefView(ViewControl& control, DeserializeContext& context) : ViewBase(control), value(context.access<block_ref>()) {}
 protected:
 	block_ref value;
 protected:
-	virtual void Deserialize(DeserializeContext& context) override { context.access(value); }
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
 };
 
 class ArrayView : public ViewBase {
 public:
-	ArrayView(ViewControl& control) : ViewBase(control) {
+	ArrayView(ViewControl& control, DeserializeContext& context) : ViewBase(control) {
 		const Array& array = GetType<Array>();
 		child_list.reserve(array.first);
 		for (size_t i = 0; i < array.first; ++i) {
-			child_list.emplace_back(ConstructChild(array.second));
+			child_list.emplace_back(ConstructChild(array.second, context));
 		}
 	}
-
 protected:
 	std::vector<ViewControl> child_list;
-
 protected:
 	virtual void OnChildTypeUpdate(ViewControl& child) override {
 		Array type;
@@ -301,13 +289,7 @@ protected:
 		type.second = GetChildType(child);
 		SetType(std::move(type));
 	}
-
-private:
-	virtual void Deserialize(DeserializeContext& context) override {
-		for (auto& child : child_list) {
-			DeserializeChild(context, child);
-		}
-	}
+protected:
 	virtual void Serialize(SerializeContext& context) const override {
 		for (auto& child : child_list) {
 			SerializeChild(context, child);
@@ -317,17 +299,15 @@ private:
 
 class TupleView : public ViewBase {
 public:
-	TupleView(ViewControl& control) : ViewBase(control) {
+	TupleView(ViewControl& control, DeserializeContext& context) : ViewBase(control) {
 		const Tuple& tuple = GetType<Tuple>();
 		child_list.reserve(tuple.size());
 		for (const auto& child : tuple) {
-			child_list.emplace_back(ConstructChild(child));
+			child_list.emplace_back(ConstructChild(child, context));
 		}
 	}
-
 protected:
 	std::vector<ViewControl> child_list;
-
 protected:
 	virtual void OnChildTypeUpdate(ViewControl& child) override {
 		Tuple type; type.reserve(child_list.size());
@@ -336,13 +316,7 @@ protected:
 		}
 		SetType(std::move(type));
 	}
-
-private:
-	virtual void Deserialize(DeserializeContext& context) override {
-		for (auto& child : child_list) {
-			DeserializeChild(context, child);
-		}
-	}
+protected:
 	virtual void Serialize(SerializeContext& context) const override {
 		for (auto& child : child_list) {
 			SerializeChild(context, child);
@@ -352,8 +326,8 @@ private:
 
 class UnionView : public ViewBase {
 public:
-	UnionView(ViewControl& control) : ViewBase(control) {}
-
+	UnionView(ViewControl& control, DeserializeContext& context) : ViewBase(control) {}
+protected:
 };
 
 
@@ -376,8 +350,8 @@ struct View {
 template<class T>
 using ViewType = typename View<T>::Type;
 
-inline std::unique_ptr<ViewBase> ViewControl::ConstructView(const TypeMeta& type) {
-	return std::visit([&](const auto& type) -> std::unique_ptr<ViewBase> { return std::make_unique<ViewType<std::remove_cvref_t<decltype(type)>>>(*this); }, type);
+inline std::unique_ptr<ViewBase> ViewControl::ConstructView(const TypeMeta& type, DeserializeContext& context) {
+	return std::visit([&](const auto& type) -> std::unique_ptr<ViewBase> { return std::make_unique<ViewType<std::remove_cvref_t<decltype(type)>>>(*this, context); }, type);
 }
 
 
