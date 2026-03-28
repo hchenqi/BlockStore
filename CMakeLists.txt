@@ -5,4 +5,7 @@ project(BlockStore CXX)
 add_subdirectory("../CppSerialize" CppSerialize)
 add_subdirectory("../SQLite3Helper" SQLite3Helper)
 add_subdirectory(BlockStore)
-add_subdirectory(Test)
+
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    add_subdirectory(Test)
+endif()
