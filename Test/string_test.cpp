@@ -52,7 +52,8 @@ int main() {
 		}
 
 		auto block = string_table.insert(str);
-		std::cout << block << ": " << str << std::endl;
+
+		std::cout << block << ": " << block.get() << std::endl;
 	}
 
 	return 0;
