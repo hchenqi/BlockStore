@@ -22,7 +22,7 @@ int main() {
 		using namespace Dynamic;
 
 		TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
-		Item item(type_registry, root.get().root);
+		BlockView block_view(type_registry, root.get().root);
 	}
 
 	return 0;

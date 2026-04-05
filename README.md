@@ -105,6 +105,6 @@ A block might be accessed frequently or shared by multiple items. To avoid query
 
 ### Dynamic Typing
 
-### Copy-On-Write
+How to interpret the data of a block is defined by user program. The typing information could be additionally stored in the block data if it needs to be dynamically interpreted.
 
-### Merge
+`Item/Dynamic.h` gives an implementation template. This is further conceptualized and implemented by the project `DynamicEditor`.
