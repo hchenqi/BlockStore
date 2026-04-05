@@ -22,7 +22,8 @@ int main() {
 		using namespace Dynamic;
 
 		TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
-		BlockView block_view(type_registry, root.get().root);
+
+		BlockView block_view(root.get().root, type_registry, type_registry.insert(TypeMeta(Any())));
 	}
 
 	return 0;

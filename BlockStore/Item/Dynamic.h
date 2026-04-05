@@ -11,33 +11,38 @@ namespace Dynamic {
 
 struct TypeMeta;
 
+using type_ref = block<TypeMeta>;
+
+struct Any : std::monostate {};
 struct Empty : std::monostate {};
 struct Boolean : std::monostate {};
 struct Integer : std::monostate {};
 struct String : std::monostate {};
-struct Ref : std::monostate {};
-struct Array : std::pair<size_t, block<TypeMeta>> { using layout_base = std::pair<size_t, block<TypeMeta>>; };
-struct Tuple : std::vector<block<TypeMeta>> { using layout_base = std::vector<block<TypeMeta>>; };
-struct Union : std::vector<block<TypeMeta>> { using layout_base = std::vector<block<TypeMeta>>; };
+struct Ref : std::tuple<type_ref> { using layout_base = std::tuple<type_ref>; };
+struct Array : std::tuple<size_t, type_ref> { using layout_base = std::tuple<size_t, type_ref>; };
+struct Tuple : std::vector<type_ref> { using layout_base = std::vector<type_ref>; };
+struct Union : std::vector<type_ref> { using layout_base = std::vector<type_ref>; };
 
-struct TypeMeta : std::variant<Empty, Boolean, Integer, String, Ref, Array, Tuple, Union> { using layout_base = std::variant<Empty, Boolean, Integer, String, Ref, Array, Tuple, Union>; };
+struct TypeMeta : std::variant<Any, Empty, Boolean, Integer, String, Ref, Array, Tuple, Union> { using layout_base = std::variant<Any, Empty, Boolean, Integer, String, Ref, Array, Tuple, Union>; };
 
 
 using TypeRegistry = OrderedRefSet<TypeMeta, BlockCacheDynamicAdapter>;
+
+using type_view = block_view<TypeMeta, TypeRegistry::KeyCache>;
 
 
 class BlockData : private block_ref, private block_ref_deserialize {
 private:
 	friend class BlockView;
+	friend class BlockViewControl;
 private:
-	BlockData(TypeRegistry& type_registry, block_ref other) : block_ref(std::move(other)), type_registry(type_registry) {}
+	BlockData(block_ref ref) : block_ref(std::move(ref)) {}
 private:
-	TypeRegistry& type_registry;
 	std::vector<std::byte> data;
 	std::vector<std::byte>::const_iterator index;
-	std::vector<ref_t> ref;
+	std::vector<ref_t> ref_list;
 private:
-	void read_begin() {
+	void read_begin(TypeRegistry& type_registry) {
 		data = block_ref::read();
 		if (data.empty()) {
 			write_begin();
@@ -70,10 +75,10 @@ protected:
 private:
 	void write_begin() {
 		data.clear();
-		ref.clear();
+		ref_list.clear();
 	}
 	void write_end() {
-		block_ref::write(data, ref);
+		block_ref::write(data, ref_list);
 	}
 protected:
 	void write(const layout_trivial auto& object) {
@@ -85,7 +90,7 @@ protected:
 			throw std::invalid_argument("block manager mismatch");
 		}
 		write(static_cast<ref_t>(object));
-		ref.push_back(object);
+		ref_list.push_back(object);
 	}
 	void write(const auto& object) {
 		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { write(item); }, object);
@@ -106,15 +111,10 @@ private:
 	friend class BlockViewControl;
 	friend class ItemView;
 private:
-	using TypeView = block_view<TypeMeta, TypeRegistry::KeyCache>;
-private:
-	ItemViewControl(TypeRegistry& type_registry, block<TypeMeta> ref, DeserializeContext& context) :
-		type_registry(type_registry),
-		type(type_registry.insert(std::move(ref))),
-		view(ConstructItemView(type.get(), context)) {}
+	ItemViewControl(TypeRegistry& type_registry, type_view type, DeserializeContext& context) : type_registry(type_registry), type(std::move(type)), view(ConstructItemView(context)) {}
 private:
 	TypeRegistry& type_registry;
-	TypeView type;
+	type_view type;
 private:
 	template<class T>
 	const T& GetType() const {
@@ -122,7 +122,7 @@ private:
 	}
 	template<class T>
 	void SetType(T type) {
-		TypeView new_type = type_registry.insert(TypeMeta(std::move(type)));
+		type_view new_type = type_registry.insert(TypeMeta(std::move(type)));
 		if (this->type != new_type) {
 			this->type = new_type;
 			TypeUpdated();
@@ -132,7 +132,7 @@ private:
 	ItemView* parent = nullptr;
 	std::unique_ptr<ItemView> view;
 private:
-	std::unique_ptr<ItemView> ConstructItemView(const TypeMeta& type, DeserializeContext& context);
+	std::unique_ptr<ItemView> ConstructItemView(DeserializeContext& context);
 private:
 	BlockViewControl& AsBlockViewControl();
 private:
@@ -142,46 +142,28 @@ private:
 	void Serialize(SerializeContext& context) const;
 };
 
-class BlockViewControl : public ItemViewControl {
+class BlockViewControl : private ItemViewControl {
 private:
 	friend class BlockView;
 	friend class ItemViewControl;
 private:
-	BlockViewControl(BlockView& block_view, TypeRegistry& type_registry, DeserializeContext& context) : ItemViewControl(type_registry, context.access<block<TypeMeta>>(), context), block_view(block_view) {}
+	BlockViewControl(BlockData& data, TypeRegistry& type_registry, type_view type) : ItemViewControl(type_registry, std::move(type), DeserializeBegin(data, type_registry)), data(data) { DeserializeEnd(data); }
 private:
-	BlockView& block_view;
+	BlockData& data;
 private:
 	using ItemViewControl::type;
 private:
-	void OnTypeUpdate();
-	void OnDataUpdate();
-private:
-	using ItemViewControl::Serialize;
-};
-
-inline BlockViewControl& ItemViewControl::AsBlockViewControl() { return static_cast<BlockViewControl&>(*this); }
-
-
-class BlockView {
-private:
-	friend class BlockViewControl;
-	friend class ItemView;
-public:
-	BlockView(TypeRegistry& type_registry, block_ref ref) : data(type_registry, std::move(ref)), control(*this, type_registry, DeserializeBegin()) { DeserializeEnd(); }
-private:
-	BlockData data;
-	BlockViewControl control;
-private:
-	DeserializeContext& DeserializeBegin() {
-		data.read_begin();
+	static DeserializeContext& DeserializeBegin(BlockData& data, TypeRegistry& type_registry) {
+		data.read_begin(type_registry);
 		return static_cast<DeserializeContext&>(data);
 	}
-	void DeserializeEnd() {
+	static void DeserializeEnd(BlockData& data) {
 		data.read_end();
 	}
+private:
 	void Serialize() {
 		data.write_begin();
-		control.Serialize(static_cast<SerializeContext&>(data));
+		ItemViewControl::Serialize(static_cast<SerializeContext&>(data));
 		data.write_end();
 	}
 private:
@@ -189,8 +171,16 @@ private:
 	void OnDataUpdate() { Serialize(); }
 };
 
-inline void BlockViewControl::OnTypeUpdate() { block_view.OnTypeUpdate(); }
-inline void BlockViewControl::OnDataUpdate() { block_view.OnDataUpdate(); }
+inline BlockViewControl& ItemViewControl::AsBlockViewControl() { return static_cast<BlockViewControl&>(*this); }
+
+
+class BlockView {
+public:
+	BlockView(block_ref ref, TypeRegistry& type_registry, type_view type) : data(std::move(ref)), control(data, type_registry, std::move(type)) {}
+private:
+	BlockData data;
+	BlockViewControl control;
+};
 
 
 class ItemView {
@@ -205,12 +195,12 @@ protected:
 	void UnregisterChild(ItemViewControl& child) { VerifyChild(child); child.parent = nullptr; }
 	void VerifyChild(const ItemViewControl& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
 protected:
-	ItemViewControl ConstructChild(block<TypeMeta> ref, DeserializeContext& context) { ItemViewControl child(control.type_registry, std::move(ref), context); RegisterChild(child); return child; }
+	ItemViewControl ConstructChild(type_ref type_ref, DeserializeContext& context) { ItemViewControl child(control.type_registry, control.type_registry.insert(std::move(type_ref)), context); RegisterChild(child); return child; }
 protected:
 	template<class T> const T& GetType() const { return control.GetType<T>(); }
 	template<class T> void SetType(T type) { return control.SetType<T>(std::move(type)); }
 protected:
-	block<TypeMeta> GetChildType(ItemViewControl& child) const { VerifyChild(child); return child.type; }
+	type_ref GetChildType(const ItemViewControl& child) const { VerifyChild(child); return child.type; }
 protected:
 	void TypeUpdated() { control.TypeUpdated(); }
 	void DataUpdated() { control.DataUpdated(); }
@@ -227,6 +217,19 @@ inline void ItemViewControl::TypeUpdated() { parent ? parent->OnChildTypeUpdate(
 inline void ItemViewControl::DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsBlockViewControl().OnDataUpdate(); }
 inline void ItemViewControl::Serialize(SerializeContext& context) const { view->Serialize(context); }
 
+
+class AnyView : public ItemView {
+public:
+	AnyView(ItemViewControl& control, DeserializeContext& context) : ItemView(control), value(context.access<type_ref>()), child(ConstructChild(value, context)) {}
+protected:
+	type_ref value;
+protected:
+	ItemViewControl child;
+protected:
+	virtual void OnChildTypeUpdate(ItemViewControl& child) override { value = GetChildType(child); DataUpdated(); }
+protected:
+	virtual void Serialize(SerializeContext& context) const override { context.access(value); SerializeChild(context, child); }
+};
 
 class EmptyView : public ItemView {
 public:
@@ -262,7 +265,9 @@ protected:
 
 class RefView : public ItemView {
 public:
-	RefView(ItemViewControl& control, DeserializeContext& context) : ItemView(control), value(context.access<block_ref>()) {}
+	RefView(ItemViewControl& control, DeserializeContext& context) : ItemView(control), value(context.access<block_ref>()) {
+		const auto& [type] = static_cast<const std::tuple<type_ref>&>(GetType<Ref>());
+	}
 protected:
 	block_ref value;
 protected:
@@ -272,20 +277,17 @@ protected:
 class ArrayView : public ItemView {
 public:
 	ArrayView(ItemViewControl& control, DeserializeContext& context) : ItemView(control) {
-		const Array& array = GetType<Array>();
-		child_list.reserve(array.first);
-		for (size_t i = 0; i < array.first; ++i) {
-			child_list.emplace_back(ConstructChild(array.second, context));
+		const auto& [size, type] = static_cast<const std::tuple<size_t, type_ref>&>(GetType<Array>());
+		child_list.reserve(size);
+		for (size_t i = 0; i < size; ++i) {
+			child_list.emplace_back(ConstructChild(type, context));
 		}
 	}
 protected:
 	std::vector<ItemViewControl> child_list;
 protected:
 	virtual void OnChildTypeUpdate(ItemViewControl& child) override {
-		Array type;
-		type.first = child_list.size();
-		type.second = GetChildType(child);
-		SetType(std::move(type));
+		SetType(Array(std::make_tuple(child_list.size(), GetChildType(child))));
 	}
 protected:
 	virtual void Serialize(SerializeContext& context) const override {
@@ -298,9 +300,9 @@ protected:
 class TupleView : public ItemView {
 public:
 	TupleView(ItemViewControl& control, DeserializeContext& context) : ItemView(control) {
-		const Tuple& tuple = GetType<Tuple>();
-		child_list.reserve(tuple.size());
-		for (const auto& child : tuple) {
+		const Tuple& type_list = GetType<Tuple>();
+		child_list.reserve(type_list.size());
+		for (const auto& child : type_list) {
 			child_list.emplace_back(ConstructChild(child, context));
 		}
 	}
@@ -324,12 +326,24 @@ protected:
 
 class UnionView : public ItemView {
 public:
-	UnionView(ItemViewControl& control, DeserializeContext& context) : ItemView(control) {}
+	UnionView(ItemViewControl& control, DeserializeContext& context) : ItemView(control), value(context.access<size_t>()), child(ConstructChild(GetType<Union>()[value], context)) {}
 protected:
+	size_t value;
+protected:
+	ItemViewControl child;
+protected:
+	virtual void OnChildTypeUpdate(ItemViewControl& child) override {
+		Union type = GetType<Union>();
+		type[value] = GetChildType(child);
+		SetType(std::move(type));
+	}
+protected:
+	virtual void Serialize(SerializeContext& context) const override { context.access(value); SerializeChild(context, child); }
 };
 
 
 using TypeViewMap = TypeMap<
+	TypeMapEntry<Any, AnyView>,
 	TypeMapEntry<Empty, EmptyView>,
 	TypeMapEntry<Boolean, BooleanView>,
 	TypeMapEntry<Integer, IntegerView>,
@@ -348,8 +362,8 @@ struct View {
 template<class T>
 using ViewType = typename View<T>::Type;
 
-inline std::unique_ptr<ItemView> ItemViewControl::ConstructItemView(const TypeMeta& type, DeserializeContext& context) {
-	return std::visit([&](const auto& type) -> std::unique_ptr<ItemView> { return std::make_unique<ViewType<std::remove_cvref_t<decltype(type)>>>(*this, context); }, type);
+inline std::unique_ptr<ItemView> ItemViewControl::ConstructItemView(DeserializeContext& context) {
+	return std::visit([&](const auto& type) -> std::unique_ptr<ItemView> { return std::make_unique<ViewType<std::remove_cvref_t<decltype(type)>>>(*this, context); }, type.get());
 }
 
 
