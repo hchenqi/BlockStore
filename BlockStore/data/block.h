@@ -5,6 +5,8 @@
 
 namespace BlockStore {
 
+constexpr size_t block_size_limit = 4096; // byte
+
 
 template<class T>
 class block : public block_ref {
@@ -22,24 +24,27 @@ public:
 		if (auto data = block_ref::read(); data.empty()) {
 			throw std::invalid_argument("block data uninitialized");
 		} else {
-			return BlockDeserialize<T>(get_manager(), data).Get();
+			return DeserializeContext(get_manager(), std::move(data)).access<T>();
 		}
 	}
 	T read(auto init) const {
 		if (auto data = block_ref::read(); data.empty()) {
 			T object(init());
-			auto [size, ref_size] = BlockSize(object).Get();
+			auto [size, ref_size] = SizeContext().access(object).Get();
 			if (ref_size > 0) {
 				const_cast<block<T>&>(*this).write(object);
 			}
 			return object;
 		} else {
-			return BlockDeserialize<T>(get_manager(), data).Get();
+			return DeserializeContext(get_manager(), std::move(data)).access<T>();
 		}
 	}
 	void write(const T& object) {
-		auto [data, ref] = BlockSerialize(get_manager(), object).Get();
-		block_ref::write(data, ref);
+		auto [data, ref_list] = SerializeContext(get_manager()).access(object).Get();
+		if (data.size() > block_size_limit) {
+			throw std::invalid_argument("block size exceeds limit");
+		}
+		block_ref::write(data, ref_list);
 	}
 };
 

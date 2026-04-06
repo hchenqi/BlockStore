@@ -31,84 +31,9 @@ using TypeRegistry = OrderedRefSet<TypeMeta, BlockCacheDynamicAdapter>;
 using type_view = block_view<TypeMeta, TypeRegistry::KeyCache>;
 
 
-class BlockData : private block_ref, private block_ref_deserialize {
-private:
-	friend class BlockView;
-	friend class BlockViewControl;
-private:
-	BlockData(block_ref ref) : block_ref(std::move(ref)) {}
-private:
-	std::vector<std::byte> data;
-	std::vector<std::byte>::const_iterator index;
-	std::vector<ref_t> ref_list;
-private:
-	void read_begin(TypeRegistry& type_registry) {
-		data = block_ref::read();
-		if (data.empty()) {
-			write_begin();
-			write(type_registry.insert(TypeMeta(Empty())));
-			write_end();
-		}
-		index = data.begin();
-	}
-	void read_end() {
-		assert(index == data.end());
-	}
-protected:
-	void read(layout_trivial auto& object) {
-		if (data.end() < index + sizeof(object)) {
-			throw std::runtime_error("deserialize error");
-		}
-		std::array<std::byte, sizeof(object)> bytes;
-		std::copy(index, index + sizeof(object), bytes.begin());
-		object = std::bit_cast<std::remove_cvref_t<decltype(object)>>(bytes);
-		index += sizeof(object);
-	}
-	void read(block_ref& object) {
-		ref_t ref;
-		read(ref);
-		object = block_ref_deserialize::construct(get_manager(), ref);
-	}
-	void read(auto& object) {
-		layout_traits<std::remove_cvref_t<decltype(object)>>::write([&](auto& item) { read(item); }, object);
-	}
-private:
-	void write_begin() {
-		data.clear();
-		ref_list.clear();
-	}
-	void write_end() {
-		block_ref::write(data, ref_list);
-	}
-protected:
-	void write(const layout_trivial auto& object) {
-		auto bytes = std::bit_cast<std::array<std::byte, sizeof(object)>>(object);
-		data.insert(data.end(), bytes.begin(), bytes.end());
-	}
-	void write(const block_ref& object) {
-		if (&get_manager() != &object.get_manager()) {
-			throw std::invalid_argument("block manager mismatch");
-		}
-		write(static_cast<ref_t>(object));
-		ref_list.push_back(object);
-	}
-	void write(const auto& object) {
-		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { write(item); }, object);
-	}
-};
-
-struct DeserializeContext : BlockData {
-	template<class T> T access() { T object; read(object); return object; }
-};
-
-struct SerializeContext : BlockData {
-	void access(const auto& object) { write(object); }
-};
-
-
 class ItemViewControl {
 private:
-	friend class BlockViewControl;
+	friend class BlockView;
 	friend class ItemView;
 private:
 	ItemViewControl(TypeRegistry& type_registry, type_view type, DeserializeContext& context) : type_registry(type_registry), type(std::move(type)), view(ConstructItemView(context)) {}
@@ -134,7 +59,7 @@ private:
 private:
 	std::unique_ptr<ItemView> ConstructItemView(DeserializeContext& context);
 private:
-	BlockViewControl& AsBlockViewControl();
+	BlockView& AsBlockView();
 private:
 	void TypeUpdated();
 	void DataUpdated();
@@ -142,45 +67,41 @@ private:
 	void Serialize(SerializeContext& context) const;
 };
 
-class BlockViewControl : private ItemViewControl {
+class BlockView : private ItemViewControl {
 private:
-	friend class BlockView;
 	friend class ItemViewControl;
 private:
-	BlockViewControl(BlockData& data, TypeRegistry& type_registry, type_view type) : ItemViewControl(type_registry, std::move(type), DeserializeBegin(data, type_registry)), data(data) { DeserializeEnd(data); }
+	BlockView(TypeRegistry& type_registry, type_view type, DeserializeContext context, block_ref&& ref) : ItemViewControl(type_registry, std::move(type), context), ref(std::move(ref)) {}
+public:
+	BlockView(TypeRegistry& type_registry, type_view type, block_ref ref) : BlockView(type_registry, std::move(type), GetDeserializeContext(ref, type_registry), std::move(ref)) {}
 private:
-	BlockData& data;
+	block_ref ref;
 private:
-	using ItemViewControl::type;
-private:
-	static DeserializeContext& DeserializeBegin(BlockData& data, TypeRegistry& type_registry) {
-		data.read_begin(type_registry);
-		return static_cast<DeserializeContext&>(data);
-	}
-	static void DeserializeEnd(BlockData& data) {
-		data.read_end();
+	static DeserializeContext GetDeserializeContext(block_ref& ref, TypeRegistry& type_registry) {
+		auto data = ref.read();
+		if (data.empty()) {
+			auto [init_data, init_ref_list] = SerializeContext(ref.get_manager()).access(type_registry.insert(TypeMeta(Empty()))).Get();
+			ref.write(init_data, init_ref_list);
+			data = std::move(init_data);
+		}
+		return DeserializeContext(ref.get_manager(), std::move(data));
 	}
 private:
 	void Serialize() {
-		data.write_begin();
-		ItemViewControl::Serialize(static_cast<SerializeContext&>(data));
-		data.write_end();
+		SerializeContext serialize_context(ref.get_manager());
+		ItemViewControl::Serialize(serialize_context);
+		auto [data, ref_list] = serialize_context.Get();
+		if (data.size() > block_size_limit) {
+			throw std::invalid_argument("block size exceeds limit");
+		}
+		ref.write(data, ref_list);
 	}
 private:
 	void OnTypeUpdate() { Serialize(); }
 	void OnDataUpdate() { Serialize(); }
 };
 
-inline BlockViewControl& ItemViewControl::AsBlockViewControl() { return static_cast<BlockViewControl&>(*this); }
-
-
-class BlockView {
-public:
-	BlockView(block_ref ref, TypeRegistry& type_registry, type_view type) : data(std::move(ref)), control(data, type_registry, std::move(type)) {}
-private:
-	BlockData data;
-	BlockViewControl control;
-};
+inline BlockView& ItemViewControl::AsBlockView() { return static_cast<BlockView&>(*this); }
 
 
 class ItemView {
@@ -213,8 +134,8 @@ protected:
 	virtual void Serialize(SerializeContext& context) const {}
 };
 
-inline void ItemViewControl::TypeUpdated() { parent ? parent->OnChildTypeUpdate(*this) : AsBlockViewControl().OnTypeUpdate(); }
-inline void ItemViewControl::DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsBlockViewControl().OnDataUpdate(); }
+inline void ItemViewControl::TypeUpdated() { parent ? parent->OnChildTypeUpdate(*this) : AsBlockView().OnTypeUpdate(); }
+inline void ItemViewControl::DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsBlockView().OnDataUpdate(); }
 inline void ItemViewControl::Serialize(SerializeContext& context) const { view->Serialize(context); }
 
 

@@ -23,7 +23,7 @@ int main() {
 
 		TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
 
-		BlockView block_view(root.get().root, type_registry, type_registry.insert(TypeMeta(Any())));
+		BlockView block_view(type_registry, type_registry.insert(TypeMeta(Any())), root.get().root);
 	}
 
 	return 0;

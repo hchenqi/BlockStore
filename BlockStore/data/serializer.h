@@ -13,123 +13,100 @@ namespace BlockStore {
 
 using CppSerialize::layout_traits;
 using CppSerialize::layout_trivial;
-using CppSerialize::layout_dynamic;
-
-constexpr size_t block_size_limit = 4096; // byte
 
 
-template<class T>
-struct BlockSize {
+struct SizeContext {
 public:
-	BlockSize(const T& object) : object(object) {}
+	SizeContext() {}
 private:
-	const T& object;
+	size_t size = 0;
+	size_t ref_size = 0;
 public:
-	static_assert(layout_dynamic<T> || layout_traits<T>::size() <= block_size_limit, "block size exceeds limit");
-private:
-	struct Context {
-		size_t size;
-		size_t ref_size;
-	};
+	std::pair<size_t, size_t> Get() {
+		return std::make_pair(size, ref_size);
+	}
 public:
-	std::pair<size_t, size_t> Get() const {
-		Context context = { 0, 0 };
-		access(context, object);
-		if (context.size > block_size_limit) {
-			throw std::invalid_argument("block size exceeds limit");
-		}
-		return std::make_pair(context.size, context.ref_size);
+	SizeContext& access(const layout_trivial auto& object) {
+		size += layout_traits<std::remove_cvref_t<decltype(object)>>::size();
+		return *this;
 	}
-private:
-	static void access(Context& context, const layout_trivial auto& object) {
-		context.size += layout_traits<std::remove_cvref_t<decltype(object)>>::size();
+	SizeContext& access(const block_ref& object) {
+		access(static_cast<ref_t>(object));
+		ref_size++;
+		return *this;
 	}
-	static void access(Context& context, const block_ref& object) {
-		access(context, static_cast<ref_t>(object));
-		context.ref_size++;
-	}
-	static void access(Context& context, const auto& object) {
-		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { access(context, item); }, object);
+	SizeContext& access(const auto& object) {
+		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { access(item); }, object);
+		return *this;
 	}
 };
 
 
-template<class T>
-struct BlockSerialize {
+struct SerializeContext {
 public:
-	BlockSerialize(BlockManager& manager, const T& object) : manager(manager), object(object) {}
+	SerializeContext(BlockManager& manager) : manager(manager) {}
 private:
 	BlockManager& manager;
-	const T& object;
-private:
-	struct Context {
-		BlockManager& manager;
-		std::vector<std::byte> data;
-		std::vector<ref_t> ref;
-	};
+	std::vector<std::byte> data;
+	std::vector<ref_t> ref_list;
 public:
-	std::pair<std::vector<std::byte>, std::vector<ref_t>> Get() const {
-		Context context = { manager };
-		auto [size, ref_size] = BlockSize(object).Get();
-		context.data.reserve(size); context.ref.reserve(ref_size);
-		access(context, object);
-		return std::make_pair(std::move(context.data), std::move(context.ref));
+	std::pair<std::vector<std::byte>, std::vector<ref_t>> Get() {
+		return std::make_pair(std::move(data), std::move(ref_list));
 	}
-private:
-	static void access(Context& context, const layout_trivial auto& object) {
+public:
+	SerializeContext& access(const layout_trivial auto& object) {
 		auto bytes = std::bit_cast<std::array<std::byte, sizeof(object)>>(object);
-		context.data.insert(context.data.end(), bytes.begin(), bytes.end());
+		data.insert(data.end(), bytes.begin(), bytes.end());
+		return *this;
 	}
-	static void access(Context& context, const block_ref& object) {
-		if (&context.manager != &object.get_manager()) {
+	SerializeContext& access(const block_ref& object) {
+		if (&manager != &object.get_manager()) {
 			throw std::invalid_argument("block manager mismatch");
 		}
-		access(context, static_cast<ref_t>(object));
-		context.ref.push_back(object);
+		access(static_cast<ref_t>(object));
+		ref_list.push_back(object);
+		return *this;
 	}
-	static void access(Context& context, const auto& object) {
-		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { access(context, item); }, object);
+	SerializeContext& access(const auto& object) {
+		layout_traits<std::remove_cvref_t<decltype(object)>>::read([&](const auto& item) { access(item); }, object);
+		return *this;
 	}
 };
 
 
-template<class T>
-struct BlockDeserialize : protected block_ref_deserialize {
+struct DeserializeContext : protected block_ref_deserialize {
 public:
-	BlockDeserialize(BlockManager& manager, const std::vector<std::byte>& data) : manager(manager), data(data) {}
+	DeserializeContext(BlockManager& manager, std::vector<std::byte> data) : manager(manager), data(std::move(data)), index(this->data.begin()) {}
 private:
 	BlockManager& manager;
-	const std::vector<std::byte>& data;
-private:
-	struct Context {
-		BlockManager& manager;
-		const std::vector<std::byte>& data;
-		std::vector<std::byte>::const_iterator index;
-	};
+	std::vector<std::byte> data;
+	std::vector<std::byte>::const_iterator index;
 public:
-	T Get() const {
+	template<class T>
+	T access() {
 		T object;
-		Context context = { manager, data, data.begin() };
-		access(context, object);
+		access(object);
 		return object;
 	}
-private:
-	static void access(Context& context, layout_trivial auto& object) {
-		if (context.data.end() < context.index + sizeof(object)) {
+	DeserializeContext& access(layout_trivial auto& object) {
+		if (data.end() < index + sizeof(object)) {
 			throw std::runtime_error("deserialization error");
 		}
 		std::array<std::byte, sizeof(object)> bytes;
-		std::copy(context.index, context.index + sizeof(object), bytes.begin());
+		std::copy(index, index + sizeof(object), bytes.begin());
 		object = std::bit_cast<std::remove_cvref_t<decltype(object)>>(bytes);
-		context.index += sizeof(object);
+		index += sizeof(object);
+		return *this;
 	}
-	static void access(Context& context, block_ref& object) {
+	DeserializeContext& access(block_ref& object) {
 		ref_t ref;
-		access(context, ref);
-		object = block_ref_deserialize::construct(context.manager, ref);
+		access(ref);
+		object = block_ref_deserialize::construct(manager, ref);
+		return *this;
 	}
-	static void access(Context& context, auto& object) {
-		layout_traits<std::remove_cvref_t<decltype(object)>>::write([&](auto& item) { access(context, item); }, object);
+	DeserializeContext& access(auto& object) {
+		layout_traits<std::remove_cvref_t<decltype(object)>>::write([&](auto& item) { access(item); }, object);
+		return *this;
 	}
 };
 
