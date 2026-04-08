@@ -5,10 +5,10 @@ using namespace BlockStore;
 
 
 struct Root {
-	block_ref type_registry;
+	block_ref descriptor_registry;
 	block_ref root;
 
-	friend constexpr auto layout(layout_type<Root>) { return declare(&Root::type_registry, &Root::root); }
+	friend constexpr auto layout(layout_type<Root>) { return declare(&Root::descriptor_registry, &Root::root); }
 };
 
 
@@ -21,9 +21,12 @@ int main() {
 	{
 		using namespace Dynamic;
 
-		TypeRegistry type_registry(cache, cache, cache, root.get().type_registry);
+		DescriptorAnyView::ResetDescriptorRegistry(std::make_unique<DescriptorRegistry>(cache, cache, cache, root.get().descriptor_registry));
 
-		BlockView block_view(type_registry, type_registry.insert(TypeMeta(Any())), root.get().root);
+		BlockView block_view(EmptyView::type, root.get().root);
+
+
+		DescriptorAnyView::ResetDescriptorRegistry();
 	}
 
 	return 0;

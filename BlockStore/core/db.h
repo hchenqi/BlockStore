@@ -71,6 +71,9 @@ public:
 			throw std::runtime_error("unsupported database version");
 		}
 	}
+	~DB() {
+		assert(active_ref_set.empty());
+	}
 
 private:
 	Metadata metadata;
