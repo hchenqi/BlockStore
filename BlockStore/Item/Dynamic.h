@@ -25,10 +25,10 @@ private:
 protected:
 	template<class Interpreter>
 	static interpreter_ref RegisterInterpreter() {
-		return RegisterInterpreter([](DeserializeContext& context) -> std::unique_ptr<ItemView> { return std::make_unique<Interpreter>(context); });
+		return RegisterInterpreter([](DeserializeContext& context) { return std::make_unique<Interpreter>(context); });
 	}
 
-public:
+private:
 	virtual interpreter_ref GetType() const = 0;
 
 private:
@@ -39,7 +39,7 @@ protected:
 	void VerifyChild(const ItemView& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
 protected:
 	std::unique_ptr<ItemView> ConstructChild(interpreter_ref type, DeserializeContext& context) { auto child = ConstructInterpreter(type, context); RegisterChild(*child); return child; }
-	interpreter_ref GetChildDescriptorRef(const ItemView& child) const { VerifyChild(child); return child.GetType(); }
+	interpreter_ref GetChildType(const ItemView& child) const { VerifyChild(child); return child.GetType(); }
 
 protected:
 	void DataUpdated() const { parent->OnChildDataUpdate(*this); }
@@ -52,10 +52,18 @@ protected:
 
 class BlockView : private ItemView {
 public:
-	BlockView(interpreter_ref type, block_ref ref) : ref(std::move(ref)) {
-		auto data = this->ref.read();
-		DeserializeContext context(this->ref.get_manager(), std::move(data));
-		item = ConstructChild(type, context);
+	BlockView(interpreter_ref type, block_ref ref, std::function<std::unique_ptr<ItemView>()> init) : ref(std::move(ref)) {
+		if (auto data = this->ref.read(); data.empty()) {
+			item = init();
+			RegisterChild(*item);
+			if (type != GetChildType(*item)) {
+				throw std::invalid_argument("child type mismatch");
+			}
+			Serialize();
+		} else {
+			DeserializeContext context(this->ref.get_manager(), std::move(data));
+			item = ConstructChild(type, context);
+		}
 	}
 
 private:
@@ -83,17 +91,21 @@ private:
 
 class EmptyView : public ItemView {
 public:
+	EmptyView() {}
 	EmptyView(DeserializeContext& context) : ItemView() {}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 };
 
 class BooleanView : public ItemView {
 public:
+	BooleanView(bool value) : value(value) {}
 	BooleanView(DeserializeContext& context) : value(context.access<bool>()) {}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	bool value;
@@ -103,9 +115,11 @@ private:
 
 class IntegerView : public ItemView {
 public:
+	IntegerView(int value) : value(value) {}
 	IntegerView(DeserializeContext& context) : value(context.access<int>()) {}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	int value;
@@ -115,9 +129,11 @@ private:
 
 class StringView : public ItemView {
 public:
+	StringView(std::string value) : value(std::move(value)) {}
 	StringView(DeserializeContext& context) : value(context.access<std::string>()) {}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	std::string value;
@@ -127,9 +143,11 @@ private:
 
 class RefView : public ItemView {
 public:
+	RefView(std::pair<interpreter_ref, block_ref> value) : value(std::move(value)) {}
 	RefView(DeserializeContext& context) : value(context.access<std::pair<interpreter_ref, block_ref>>()) {}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	std::pair<interpreter_ref, block_ref> value;
@@ -140,11 +158,17 @@ private:
 
 class AnyView : public ItemView {
 public:
+	AnyView(std::unique_ptr<ItemView> child) {
+		RegisterChild(*child);
+		child_type = GetChildType(*child);
+		this->child = std::move(child);
+	}
 	AnyView(DeserializeContext& context) : child_type(context.access<interpreter_ref>()) {
 		child = ConstructChild(child_type, context);
 	}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	interpreter_ref child_type;
@@ -158,6 +182,21 @@ private:
 
 class ArrayView : public ItemView {
 public:
+	ArrayView(interpreter_ref child_type, std::vector<std::unique_ptr<ItemView>> child_list) {
+		for (size_t i = 0; i < child_list.size(); ++i) {
+			RegisterChild(*child_list[i]);
+			if (child_type != GetChildType(*child_list[i])) {
+				throw std::invalid_argument("child_type mismatch");
+			}
+		}
+		descriptor = std::make_pair(child_list.size(), child_type);
+		this->child_list = std::move(child_list);
+	}
+	ArrayView(interpreter_ref child_type, auto... child) : ArrayView(child_type, [&]() {
+		std::vector<std::unique_ptr<ItemView>> child_list; child_list.reserve(sizeof...(child));
+		(child_list.emplace_back(std::move(child)), ...);
+		return child_list;
+	}()) {}
 	ArrayView(DeserializeContext& context) : descriptor(context.access<std::pair<size_t, interpreter_ref>>()) {
 		auto [size, child_type] = descriptor;
 		child_list.reserve(size);
@@ -166,7 +205,8 @@ public:
 		}
 	}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	std::pair<size_t, interpreter_ref> descriptor;
@@ -182,6 +222,19 @@ private:
 
 class TupleView : public ItemView {
 public:
+	TupleView(std::vector<std::unique_ptr<ItemView>> child_list) {
+		descriptor.reserve(child_list.size());
+		for (size_t i = 0; i < child_list.size(); ++i) {
+			RegisterChild(*child_list[i]);
+			descriptor.emplace_back(GetChildType(*child_list[i]));
+		}
+		this->child_list = std::move(child_list);
+	}
+	TupleView(auto... child) : TupleView([&]() {
+		std::vector<std::unique_ptr<ItemView>> child_list; child_list.reserve(sizeof...(child));
+		(child_list.emplace_back(std::move(child)), ...);
+		return child_list;
+	}()) {}
 	TupleView(DeserializeContext& context) : descriptor(context.access<std::vector<interpreter_ref>>()) {
 		auto size = descriptor.size();
 		child_list.reserve(size);
@@ -190,7 +243,8 @@ public:
 		}
 	}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	std::vector<interpreter_ref> descriptor;
@@ -206,11 +260,29 @@ private:
 
 class UnionView : public ItemView {
 public:
+	UnionView(std::vector<interpreter_ref> descriptor, std::unique_ptr<ItemView> child) {
+		std::unordered_map<interpreter_ref, size_t> descriptor_index_map;
+		for (size_t i = 0; i < descriptor.size(); ++i) {
+			auto [it, success] = descriptor_index_map.emplace(descriptor[i], i);
+			if (!success) {
+				throw std::invalid_argument("repetitive descriptors");
+			}
+		}
+		RegisterChild(*child);
+		auto it = descriptor_index_map.find(GetChildType(*child));
+		if (it == descriptor_index_map.end()) {
+			throw std::invalid_argument("child type not found");
+		}
+		this->descriptor = std::move(descriptor);
+		this->index = it->second;
+		this->child = std::move(child);
+	}
 	UnionView(DeserializeContext& context) : descriptor(context.access<std::vector<interpreter_ref>>()), index(context.access<size_t>()) {
 		child = ConstructChild(descriptor[index], context);
 	}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	std::vector<interpreter_ref> descriptor;
@@ -289,7 +361,8 @@ private:
 public:
 	DescriptorAnyView(DeserializeContext& context) : DescriptorAnyView(GetDescriptorRegistry(), context.access<descriptor_ref>(), context) {}
 public:
-	static interpreter_ref type;
+	static const interpreter_ref type;
+private:
 	virtual interpreter_ref GetType() const override { return type; }
 private:
 	virtual void Serialize(SerializeContext& context) const override {

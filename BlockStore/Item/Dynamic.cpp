@@ -23,16 +23,16 @@ std::unique_ptr<ItemView> ItemView::ConstructInterpreter(interpreter_ref type, D
 }
 
 
-interpreter_ref EmptyView::type = RegisterInterpreter<EmptyView>();
-interpreter_ref BooleanView::type = RegisterInterpreter<BooleanView>();
-interpreter_ref IntegerView::type = RegisterInterpreter<IntegerView>();
-interpreter_ref StringView::type = RegisterInterpreter<StringView>();
-interpreter_ref RefView::type = RegisterInterpreter<RefView>();
+const interpreter_ref EmptyView::type = RegisterInterpreter<EmptyView>();
+const interpreter_ref BooleanView::type = RegisterInterpreter<BooleanView>();
+const interpreter_ref IntegerView::type = RegisterInterpreter<IntegerView>();
+const interpreter_ref StringView::type = RegisterInterpreter<StringView>();
+const interpreter_ref RefView::type = RegisterInterpreter<RefView>();
 
-interpreter_ref AnyView::type = RegisterInterpreter<AnyView>();
-interpreter_ref ArrayView::type = RegisterInterpreter<ArrayView>();
-interpreter_ref TupleView::type = RegisterInterpreter<TupleView>();
-interpreter_ref UnionView::type = RegisterInterpreter<UnionView>();
+const interpreter_ref AnyView::type = RegisterInterpreter<AnyView>();
+const interpreter_ref ArrayView::type = RegisterInterpreter<ArrayView>();
+const interpreter_ref TupleView::type = RegisterInterpreter<TupleView>();
+const interpreter_ref UnionView::type = RegisterInterpreter<UnionView>();
 
 
 namespace {
@@ -41,7 +41,7 @@ std::unique_ptr<DescriptorRegistry> descriptor_registry;
 
 } // namespace
 
-interpreter_ref DescriptorAnyView::type = RegisterInterpreter<DescriptorAnyView>();
+const interpreter_ref DescriptorAnyView::type = RegisterInterpreter<DescriptorAnyView>();
 
 void DescriptorAnyView::ResetDescriptorRegistry(std::unique_ptr<DescriptorRegistry> registry) { descriptor_registry = std::move(registry); }
 

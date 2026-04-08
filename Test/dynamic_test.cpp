@@ -23,7 +23,23 @@ int main() {
 
 		DescriptorAnyView::ResetDescriptorRegistry(std::make_unique<DescriptorRegistry>(cache, cache, cache, root.get().descriptor_registry));
 
-		BlockView block_view(EmptyView::type, root.get().root);
+		BlockView block_view(UnionView::type, root.get().root, []() {
+			return std::make_unique<UnionView>(
+				std::vector<interpreter_ref>{ StringView::type, ArrayView::type, TupleView::type, UnionView::type },
+				std::make_unique<TupleView>(
+					std::make_unique<AnyView>(
+						std::make_unique<EmptyView>()
+					),
+					std::make_unique<ArrayView>(
+						IntegerView::type,
+						std::make_unique<IntegerView>(1),
+						std::make_unique<IntegerView>(2),
+						std::make_unique<IntegerView>(3)
+					),
+					std::make_unique<StringView>("hello")
+				)
+			);
+		});
 
 
 		DescriptorAnyView::ResetDescriptorRegistry();
