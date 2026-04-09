@@ -35,18 +35,23 @@ const interpreter_ref TupleView::type = RegisterInterpreter<TupleView>();
 const interpreter_ref UnionView::type = RegisterInterpreter<UnionView>();
 
 
+namespace Descriptor {
+
 namespace {
 
 std::unique_ptr<DescriptorRegistry> descriptor_registry;
 
 } // namespace
 
+
 const interpreter_ref DescriptorAnyView::type = RegisterInterpreter<DescriptorAnyView>();
 
-void DescriptorAnyView::ResetDescriptorRegistry(std::unique_ptr<DescriptorRegistry> registry) { descriptor_registry = std::move(registry); }
+void DescriptorView::ResetDescriptorRegistry(std::unique_ptr<DescriptorRegistry> registry) { descriptor_registry = std::move(registry); }
 
-DescriptorRegistry& DescriptorAnyView::GetDescriptorRegistry() { return *descriptor_registry; }
+DescriptorRegistry& DescriptorView::GetDescriptorRegistry() { return *descriptor_registry; }
 
+
+} // namespace Descriptor
 
 } // namespace Dynamic
 

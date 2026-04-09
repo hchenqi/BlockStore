@@ -20,6 +20,9 @@ public:
 	virtual ~ItemView() {}
 
 private:
+	ItemView* parent = nullptr;
+
+private:
 	static interpreter_ref RegisterInterpreter(std::function<std::unique_ptr<ItemView>(DeserializeContext&)> f);
 	static std::unique_ptr<ItemView> ConstructInterpreter(interpreter_ref type, DeserializeContext& context);
 protected:
@@ -27,12 +30,9 @@ protected:
 	static interpreter_ref RegisterInterpreter() {
 		return RegisterInterpreter([](DeserializeContext& context) { return std::make_unique<Interpreter>(context); });
 	}
-
 private:
 	virtual interpreter_ref GetType() const = 0;
 
-private:
-	ItemView* parent = nullptr;
 protected:
 	void RegisterChild(ItemView& child) { if (child.parent) { throw std::invalid_argument("child already has a parent"); } child.parent = this; }
 	void UnregisterChild(ItemView& child) { VerifyChild(child); child.parent = nullptr; }
@@ -85,7 +85,7 @@ private:
 private:
 	void Serialize() {
 		SerializeContext context(get_manager());
-		Serialize(context);
+		SerializeChild(context, *item);
 		auto [data, ref_list] = context.Get();
 		if (data.size() > block_size_limit) {
 			throw std::invalid_argument("block size exceeds limit");
@@ -95,7 +95,6 @@ private:
 
 private:
 	virtual void OnChildDataUpdate(const ItemView& child) override { Serialize(); }
-	virtual void Serialize(SerializeContext& context) const override { SerializeChild(context, *item); }
 };
 
 
@@ -398,206 +397,283 @@ public:
 };
 
 
+namespace Descriptor {
+
 struct DescriptorType;
 
 using descriptor_ref = block<DescriptorType>;
 
 using BasicDescriptor = interpreter_ref;
 using ArrayDescriptor = std::tuple<size_t, descriptor_ref>;
-struct TupleDescriptor : std::vector<descriptor_ref> { using layout_base = std::vector<descriptor_ref>; };
-struct UnionDescriptor : std::vector<descriptor_ref> { using layout_base = std::vector<descriptor_ref>; };
+struct TupleDescriptor : std::vector<descriptor_ref> { using layout_base = std::vector<descriptor_ref>; using layout_base::layout_base; };
+struct UnionDescriptor : std::vector<descriptor_ref> { using layout_base = std::vector<descriptor_ref>; using layout_base::layout_base; };
 
 struct DescriptorType : std::variant<BasicDescriptor, ArrayDescriptor, TupleDescriptor, UnionDescriptor> { using layout_base = std::variant<BasicDescriptor, ArrayDescriptor, TupleDescriptor, UnionDescriptor>; };
 
-using DescriptorRegistry = OrderedRefSet<DescriptorType, BlockCacheDynamicAdapter>;
-using Descriptor = block_view<DescriptorType, DescriptorRegistry::KeyCache>;
+class DescriptorRegistry : private OrderedRefSet<DescriptorType, BlockCacheDynamicAdapter> {
+public:
+	using OrderedRefSet::KeyCache;
+	using OrderedRefSet::OrderedRefSet;
+	using OrderedRefSet::key_cache;
+	using OrderedRefSet::insert;
+};
 
 
-class DescriptorSelect {
-private:
-	friend class DescriptorAnyView;
-	friend class DescriptorView;
-private:
-	DescriptorSelect(DescriptorRegistry& registry, descriptor_ref ref, DeserializeContext& context) : registry(registry), descriptor(registry.insert(std::move(ref))) {
-		view = InstantiateDescriptorView(this->descriptor.get(), context);
-	}
-
-private:
-	DescriptorRegistry& registry;
-	Descriptor descriptor;
-private:
-	template<class T>
-	const T& GetDescriptor() const {
-		return std::get<T>(descriptor.get());
-	}
-	template<class T>
-	void SetDescriptor(T descriptor) {
-		Descriptor new_type = registry.insert(DescriptorType(std::move(descriptor)));
-		if (this->descriptor != new_type) {
-			this->descriptor = new_type;
-			DescriptorUpdated();
-		}
-	}
+class DescriptorView {
+protected:
+	DescriptorView() {}
+public:
+	virtual ~DescriptorView() {}
 
 private:
 	DescriptorView* parent = nullptr;
-	std::unique_ptr<DescriptorView> view;
-private:
-	std::unique_ptr<DescriptorView> InstantiateDescriptorView(const DescriptorType& type, DeserializeContext& context);
 
-private:
-	DescriptorAnyView& AsDescriptorAnyView();
-private:
-	void DescriptorUpdated();
-	void DataUpdated();
-private:
-	void Serialize(SerializeContext& context) const;
-};
-
-class DescriptorAnyView : public ItemView, private DescriptorSelect {
-private:
-	friend class DescriptorSelect;
-private:
-	DescriptorAnyView(DescriptorRegistry& registry, descriptor_ref ref, DeserializeContext& context) : DescriptorSelect(registry, std::move(ref), context) {}
-public:
-	DescriptorAnyView(DeserializeContext& context) : DescriptorAnyView(GetDescriptorRegistry(), context.access<descriptor_ref>(), context) {}
-public:
-	static const interpreter_ref type;
-private:
-	virtual interpreter_ref GetType() const override { return type; }
-private:
-	virtual void Serialize(SerializeContext& context) const override {
-		context.access(static_cast<const descriptor_ref&>(descriptor));
-		DescriptorSelect::Serialize(context);
-	}
 public:
 	static void ResetDescriptorRegistry(std::unique_ptr<DescriptorRegistry> registry = nullptr);
 private:
 	static DescriptorRegistry& GetDescriptorRegistry();
-};
-
-inline DescriptorAnyView& DescriptorSelect::AsDescriptorAnyView() { return static_cast<DescriptorAnyView&>(*this); }
-
-
-class DescriptorView {
+	block_view<DescriptorType, DescriptorRegistry::KeyCache> LookUpDescriptor(descriptor_ref type) { return GetDescriptorRegistry().key_cache.read(std::move(type)); }
+	std::unique_ptr<DescriptorView> ConstructDescriptorView(descriptor_ref type, DeserializeContext& context);
+public:
+	static descriptor_ref RegisterDescriptor(auto descriptor) { return GetDescriptorRegistry().insert(DescriptorType(std::move(descriptor))).drop(); }
 private:
-	friend class DescriptorSelect;
-protected:
-	DescriptorView(DescriptorSelect& select) : select(select) {}
-
-private:
-	DescriptorSelect& select;
-protected:
-	void RegisterChild(DescriptorSelect& child) { if (child.parent) { throw std::invalid_argument("child already has a parent"); } child.parent = this; }
-	void UnregisterChild(DescriptorSelect& child) { VerifyChild(child); child.parent = nullptr; }
-	void VerifyChild(const DescriptorSelect& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
+	virtual descriptor_ref GetDescriptorType() const = 0;
 
 protected:
-	DescriptorSelect InstantiateChild(descriptor_ref ref, DeserializeContext& context) { DescriptorSelect child(select.registry, std::move(ref), context); RegisterChild(child); return child; }
+	void RegisterChild(DescriptorView& child) { if (child.parent) { throw std::invalid_argument("child already has a parent"); } child.parent = this; }
+	void UnregisterChild(DescriptorView& child) { VerifyChild(child); child.parent = nullptr; }
+	void VerifyChild(const DescriptorView& child) const { if (child.parent != this) { throw std::invalid_argument("not a child"); } }
 protected:
-	template<class T> const T& GetDescriptor() const { return select.GetDescriptor<T>(); }
-	template<class T> void SetDescriptor(T descriptor) { return select.SetDescriptor<T>(std::move(descriptor)); }
-protected:
-	descriptor_ref GetChildDescriptorRef(const DescriptorSelect& child) const { VerifyChild(child); return child.descriptor; }
+	std::unique_ptr<DescriptorView> ConstructChild(descriptor_ref type, DeserializeContext& context) { auto child = ConstructDescriptorView(std::move(type), context); RegisterChild(*child); return child; }
+	descriptor_ref GetChildDescriptorType(const DescriptorView& child) const { VerifyChild(child); return child.GetDescriptorType(); }
 
 protected:
-	void DescriptorUpdated() { select.DescriptorUpdated(); }
-	void DataUpdated() { select.DataUpdated(); }
+	void TypeUpdated() { if (parent) { parent->OnChildTypeUpdate(*this); } }
+	void DataUpdated() { if (parent) { parent->OnChildDataUpdate(*this); } }
+	void SerializeChild(SerializeContext& context, const DescriptorView& child) const { VerifyChild(child); child.Serialize(context); }
 protected:
-	virtual void OnChildDescriptorUpdate(DescriptorSelect& child) {}
-	virtual void OnChildDataUpdate(DescriptorSelect& child) { DataUpdated(); }
-protected:
-	void SerializeChild(SerializeContext& context, const DescriptorSelect& child) const { VerifyChild(child); child.Serialize(context); }
-protected:
+	virtual void OnChildTypeUpdate(const DescriptorView& child) {}
+	virtual void OnChildDataUpdate(const DescriptorView& child) { DataUpdated(); }
 	virtual void Serialize(SerializeContext& context) const {}
 };
 
-inline void DescriptorSelect::DescriptorUpdated() { parent ? parent->OnChildDescriptorUpdate(*this) : AsDescriptorAnyView().ItemView::DataUpdated(); }
-inline void DescriptorSelect::DataUpdated() { parent ? parent->OnChildDataUpdate(*this) : AsDescriptorAnyView().ItemView::DataUpdated(); }
-inline void DescriptorSelect::Serialize(SerializeContext& context) const { view->Serialize(context); }
+
+class DescriptorAnyView : public ItemView, private DescriptorView {
+public:
+	DescriptorAnyView(std::unique_ptr<DescriptorView> child) { Set(std::move(child)); }
+	DescriptorAnyView(DeserializeContext& context) : child_type(context.access<descriptor_ref>()), child(DescriptorView::ConstructChild(child_type, context)) {}
+
+public:
+	static const interpreter_ref type;
+private:
+	virtual interpreter_ref GetType() const override { return type; }
+
+private:
+	descriptor_ref child_type;
+	std::unique_ptr<DescriptorView> child;
+private:
+	virtual void Serialize(SerializeContext& context) const override {
+		context.access(child_type);
+		DescriptorView::SerializeChild(context, *child);
+	}
+
+private:
+	virtual descriptor_ref GetDescriptorType() const override { return descriptor_ref(); }
+
+private:
+	virtual void OnChildTypeUpdate(const DescriptorView& child) override { ItemView::DataUpdated(); }
+	virtual void OnChildDataUpdate(const DescriptorView& child) override { ItemView::DataUpdated(); }
+
+public:
+	void Set(std::unique_ptr<DescriptorView> child) {
+		DescriptorView::RegisterChild(*child);
+		child_type = GetChildDescriptorType(*child);
+		this->child = std::move(child);
+		ItemView::DataUpdated();
+	}
+};
 
 
 class BasicDescriptorView : public DescriptorView, private ItemView {
 public:
-	BasicDescriptorView(DescriptorSelect& select, DeserializeContext& context) : DescriptorView(select) {
-		interpreter_ref type = GetDescriptor<BasicDescriptor>();
-		item = ConstructChild(type, context);
+	BasicDescriptorView(std::unique_ptr<ItemView> item) {
+		ItemView::RegisterChild(*item);
+		descriptor = ItemView::GetChildType(*item);
+		this->item = std::move(item);
 	}
-protected:
+	BasicDescriptorView(BasicDescriptor descriptor, DeserializeContext& context) : descriptor(descriptor), item(ItemView::ConstructChild(descriptor, context)) {}
+
+private:
+	BasicDescriptor descriptor;
+private:
+	virtual descriptor_ref GetDescriptorType() const override { return RegisterDescriptor(descriptor); }
+
+private:
 	std::unique_ptr<ItemView> item;
 private:
 	virtual interpreter_ref GetType() const override { return -1; }
 private:
-	virtual void OnChildDataUpdate(const ItemView& child) { DescriptorView::DataUpdated(); }
+	virtual void OnChildDataUpdate(const ItemView& child) override { DescriptorView::DataUpdated(); }
 	virtual void Serialize(SerializeContext& context) const override { ItemView::SerializeChild(context, *item); }
+
+public:
+	void Set(std::unique_ptr<ItemView> item) {
+		ItemView::RegisterChild(*item);
+		BasicDescriptor new_descriptor = ItemView::GetChildType(*item);
+		this->item = std::move(item);
+		if (this->descriptor != new_descriptor) {
+			this->descriptor = new_descriptor;
+			DescriptorView::TypeUpdated();
+		} else {
+			DescriptorView::DataUpdated();
+		}
+	}
 };
 
 class ArrayDescriptorView : public DescriptorView {
 public:
-	ArrayDescriptorView(DescriptorSelect& select, DeserializeContext& context) : DescriptorView(select) {
-		const auto& [size, descriptor] = GetDescriptor<ArrayDescriptor>();
+	ArrayDescriptorView(descriptor_ref child_type, std::vector<std::unique_ptr<DescriptorView>> child_list) { Set(child_type, std::move(child_list)); }
+	ArrayDescriptorView(descriptor_ref child_type, auto... child) : ArrayDescriptorView(child_type, [&]() {
+		std::vector<std::unique_ptr<DescriptorView>> child_list; child_list.reserve(sizeof...(child));
+		(child_list.emplace_back(std::move(child)), ...);
+		return child_list;
+	}()) {}
+	ArrayDescriptorView(ArrayDescriptor descriptor, DeserializeContext& context) : descriptor(std::move(descriptor)) {
+		const auto& [size, type] = this->descriptor;
 		child_list.reserve(size);
 		for (size_t i = 0; i < size; ++i) {
-			child_list.emplace_back(InstantiateChild(descriptor, context));
+			child_list.emplace_back(ConstructChild(type, context));
 		}
 	}
+
 private:
-	std::vector<DescriptorSelect> child_list;
+	ArrayDescriptor descriptor;
 private:
-	virtual void OnChildDescriptorUpdate(DescriptorSelect& child) override {
-		SetDescriptor(ArrayDescriptor(std::make_tuple(child_list.size(), GetChildDescriptorRef(child))));
+	virtual descriptor_ref GetDescriptorType() const override { return RegisterDescriptor(descriptor); }
+
+private:
+	std::vector<std::unique_ptr<DescriptorView>> child_list;
+private:
+	virtual void OnChildTypeUpdate(const DescriptorView& child) override {
+		throw std::invalid_argument("array child type updated");
 	}
-private:
 	virtual void Serialize(SerializeContext& context) const override {
 		for (auto& child : child_list) {
-			SerializeChild(context, child);
+			SerializeChild(context, *child);
 		}
+	}
+
+public:
+	void Set(descriptor_ref child_type, std::vector<std::unique_ptr<DescriptorView>> child_list) {
+		for (size_t i = 0; i < child_list.size(); ++i) {
+			RegisterChild(*child_list[i]);
+			if (child_type != GetChildDescriptorType(*child_list[i])) {
+				throw std::invalid_argument("child_type mismatch");
+			}
+		}
+		descriptor = std::make_pair(child_list.size(), child_type);
+		this->child_list = std::move(child_list);
+		TypeUpdated();
 	}
 };
 
 class TupleDescriptorView : public DescriptorView {
 public:
-	TupleDescriptorView(DescriptorSelect& select, DeserializeContext& context) : DescriptorView(select) {
-		const TupleDescriptor& type_list = GetDescriptor<TupleDescriptor>();
-		child_list.reserve(type_list.size());
-		for (const auto& child : type_list) {
-			child_list.emplace_back(InstantiateChild(child, context));
+	TupleDescriptorView(std::vector<std::unique_ptr<DescriptorView>> child_list) { Set(std::move(child_list)); }
+	TupleDescriptorView(auto... child) : TupleDescriptorView([&]() {
+		std::vector<std::unique_ptr<DescriptorView>> child_list; child_list.reserve(sizeof...(child));
+		(child_list.emplace_back(std::move(child)), ...);
+		return child_list;
+	}()) {}
+	TupleDescriptorView(TupleDescriptor descriptor, DeserializeContext& context) : descriptor(std::move(descriptor)) {
+		child_list.reserve(this->descriptor.size());
+		for (const auto& type : this->descriptor) {
+			child_list.emplace_back(ConstructChild(type, context));
 		}
 	}
+
 private:
-	std::vector<DescriptorSelect> child_list;
+	TupleDescriptor descriptor;
 private:
-	virtual void OnChildDescriptorUpdate(DescriptorSelect& child) override {
-		TupleDescriptor descriptor; descriptor.reserve(child_list.size());
-		for (auto& child : child_list) {
-			descriptor.emplace_back(GetChildDescriptorRef(child));
-		}
-		SetDescriptor(std::move(descriptor));
+	virtual descriptor_ref GetDescriptorType() const override { return RegisterDescriptor(descriptor); }
+
+private:
+	std::vector<std::unique_ptr<DescriptorView>> child_list;
+private:
+	virtual void OnChildTypeUpdate(const DescriptorView& child) override {
+		size_t child_index = std::find_if(child_list.begin(), child_list.end(), [&](const auto& item) { return item.get() == &child; }) - child_list.begin();
+		descriptor[child_index] = GetChildDescriptorType(child);
+		TypeUpdated();
 	}
-private:
 	virtual void Serialize(SerializeContext& context) const override {
 		for (auto& child : child_list) {
-			SerializeChild(context, child);
+			SerializeChild(context, *child);
 		}
+	}
+
+public:
+	void Set(std::vector<std::unique_ptr<DescriptorView>> child_list) {
+		descriptor.clear();
+		descriptor.reserve(child_list.size());
+		for (size_t i = 0; i < child_list.size(); ++i) {
+			RegisterChild(*child_list[i]);
+			descriptor.emplace_back(GetChildDescriptorType(*child_list[i]));
+		}
+		this->child_list = std::move(child_list);
+		TypeUpdated();
 	}
 };
 
 class UnionDescriptorView : public DescriptorView {
 public:
-	UnionDescriptorView(DescriptorSelect& select, DeserializeContext& context) : DescriptorView(select), index(context.access<size_t>()), child(InstantiateChild(GetDescriptor<UnionDescriptor>()[index], context)) {}
+	UnionDescriptorView(UnionDescriptor descriptor, std::unique_ptr<DescriptorView> child) { Set(std::move(descriptor), std::move(child)); }
+	UnionDescriptorView(UnionDescriptor descriptor, DeserializeContext& context) : descriptor(std::move(descriptor)), index(context.access<size_t>()), child(ConstructChild(this->descriptor[index], context)) {}
+
+private:
+	UnionDescriptor descriptor;
+private:
+	virtual descriptor_ref GetDescriptorType() const override { return RegisterDescriptor(descriptor); }
+
 private:
 	size_t index;
-	DescriptorSelect child;
+	std::unique_ptr<DescriptorView> child;
 private:
-	virtual void OnChildDescriptorUpdate(DescriptorSelect& child) override {
-		UnionDescriptor descriptor = GetDescriptor<UnionDescriptor>();
-		descriptor[index] = GetChildDescriptorRef(child);
-		SetDescriptor(std::move(descriptor));
+	virtual void OnChildTypeUpdate(const DescriptorView& child) override {
+		auto it = std::find(descriptor.begin(), descriptor.end(), GetChildDescriptorType(child));
+		if (it == descriptor.end()) {
+			throw std::invalid_argument("child type not found");
+		}
+		this->index = it - descriptor.begin();
+		DataUpdated();
 	}
-private:
 	virtual void Serialize(SerializeContext& context) const override {
 		context.access(index);
-		SerializeChild(context, child);
+		SerializeChild(context, *child);
+	}
+
+public:
+	void Set(UnionDescriptor descriptor, std::unique_ptr<DescriptorView> child) {
+		std::unordered_map<ref_t, size_t> descriptor_index_map;
+		for (size_t i = 0; i < descriptor.size(); ++i) {
+			auto [it, success] = descriptor_index_map.emplace(descriptor[i], i);
+			if (!success) {
+				throw std::invalid_argument("repetitive descriptors");
+			}
+		}
+		RegisterChild(*child);
+		auto it = descriptor_index_map.find(GetChildDescriptorType(*child));
+		if (it == descriptor_index_map.end()) {
+			throw std::invalid_argument("child type not found");
+		}
+		this->descriptor = std::move(descriptor);
+		this->index = it->second;
+		this->child = std::move(child);
+		TypeUpdated();
+	}
+	void Set(std::unique_ptr<DescriptorView> child) {
+		RegisterChild(*child);
+		this->child = std::move(child);
+		OnChildTypeUpdate(*this->child);
 	}
 };
 
@@ -609,10 +685,12 @@ using DescriptorViewMap = TypeMap<
 	TypeMapEntry<UnionDescriptor, UnionDescriptorView>
 >;
 
-inline std::unique_ptr<DescriptorView> DescriptorSelect::InstantiateDescriptorView(const DescriptorType& type, DeserializeContext& context) {
-	return std::visit([&](const auto& descriptor) -> std::unique_ptr<DescriptorView> { return std::make_unique<MappedType<DescriptorViewMap, std::remove_cvref_t<decltype(descriptor)>>>(*this, context); }, type);
+inline std::unique_ptr<DescriptorView> DescriptorView::ConstructDescriptorView(descriptor_ref type, DeserializeContext& context) {
+	return std::visit([&](const auto& descriptor) -> std::unique_ptr<DescriptorView> { return std::make_unique<MappedType<DescriptorViewMap, std::remove_cvref_t<decltype(descriptor)>>>(std::move(descriptor), context); }, LookUpDescriptor(std::move(type)).get());
 }
 
+
+} // namespace Descriptor
 
 } // namespace Dynamic
 
