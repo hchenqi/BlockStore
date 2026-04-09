@@ -42,7 +42,7 @@ protected:
 	interpreter_ref GetChildType(const ItemView& child) const { VerifyChild(child); return child.GetType(); }
 
 protected:
-	void DataUpdated() const { parent->OnChildDataUpdate(*this); }
+	void DataUpdated() const { if (parent) { parent->OnChildDataUpdate(*this); } }
 	void SerializeChild(SerializeContext& context, const ItemView& child) const { VerifyChild(child); child.Serialize(context); }
 protected:
 	virtual void OnChildDataUpdate(const ItemView& child) { DataUpdated(); }
@@ -50,10 +50,21 @@ protected:
 };
 
 
-class BlockView : private ItemView {
+class BlockView : private block_ref, private ItemView {
+private:
+	friend class RefView;
+
 public:
-	BlockView(interpreter_ref type, block_ref ref, std::function<std::unique_ptr<ItemView>()> init) : ref(std::move(ref)) {
-		if (auto data = this->ref.read(); data.empty()) {
+	BlockView(interpreter_ref type, block_ref ref) : block_ref(std::move(ref)) {
+		if (auto data = read(); data.empty()) {
+			throw std::invalid_argument("block data uninitialized");
+		} else {
+			DeserializeContext context(get_manager(), std::move(data));
+			item = ConstructChild(type, context);
+		}
+	}
+	BlockView(interpreter_ref type, block_ref ref, std::function<std::unique_ptr<ItemView>()> init) : block_ref(std::move(ref)) {
+		if (auto data = read(); data.empty()) {
 			item = init();
 			RegisterChild(*item);
 			if (type != GetChildType(*item)) {
@@ -61,26 +72,25 @@ public:
 			}
 			Serialize();
 		} else {
-			DeserializeContext context(this->ref.get_manager(), std::move(data));
+			DeserializeContext context(get_manager(), std::move(data));
 			item = ConstructChild(type, context);
 		}
 	}
 
 private:
-	virtual interpreter_ref GetType() const override { return -1; }
+	virtual interpreter_ref GetType() const override { return GetChildType(*item); }
 
 private:
-	block_ref ref;
 	std::unique_ptr<ItemView> item;
 private:
 	void Serialize() {
-		SerializeContext context(ref.get_manager());
+		SerializeContext context(get_manager());
 		Serialize(context);
 		auto [data, ref_list] = context.Get();
 		if (data.size() > block_size_limit) {
 			throw std::invalid_argument("block size exceeds limit");
 		}
-		ref.write(data, ref_list);
+		write(data, ref_list);
 	}
 
 private:
@@ -93,6 +103,7 @@ class EmptyView : public ItemView {
 public:
 	EmptyView() {}
 	EmptyView(DeserializeContext& context) : ItemView() {}
+
 public:
 	static const interpreter_ref type;
 private:
@@ -103,73 +114,128 @@ class BooleanView : public ItemView {
 public:
 	BooleanView(bool value) : value(value) {}
 	BooleanView(DeserializeContext& context) : value(context.access<bool>()) {}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	bool value;
 private:
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
+
+public:
+	void Set(bool value) {
+		if (this->value != value) {
+			this->value = value;
+			DataUpdated();
+		}
+	}
 };
 
 class IntegerView : public ItemView {
 public:
 	IntegerView(int value) : value(value) {}
 	IntegerView(DeserializeContext& context) : value(context.access<int>()) {}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	int value;
 private:
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
+
+public:
+	void Set(int value) {
+		if (this->value != value) {
+			this->value = value;
+			DataUpdated();
+		}
+	}
 };
 
 class StringView : public ItemView {
 public:
 	StringView(std::string value) : value(std::move(value)) {}
 	StringView(DeserializeContext& context) : value(context.access<std::string>()) {}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	std::string value;
 private:
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
+
+public:
+	void Set(std::string value) {
+		if (this->value != value) {
+			this->value = value;
+			DataUpdated();
+		}
+	}
 };
 
 class RefView : public ItemView {
 public:
+	RefView(std::unique_ptr<BlockView> block_view) { ResetBlockView(std::move(block_view)); }
 	RefView(std::pair<interpreter_ref, block_ref> value) : value(std::move(value)) {}
 	RefView(DeserializeContext& context) : value(context.access<std::pair<interpreter_ref, block_ref>>()) {}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	std::pair<interpreter_ref, block_ref> value;
 private:
 	virtual void Serialize(SerializeContext& context) const override { context.access(value); }
+
+public:
+	void Set(std::pair<interpreter_ref, block_ref> value) {
+		if (this->value != value) {
+			CollapseBlockView();
+			this->value = value;
+			DataUpdated();
+		}
+	}
+
+private:
+	std::unique_ptr<BlockView> block_view;
+public:
+	void ResetBlockView(std::unique_ptr<BlockView> block_view) {
+		Set(std::make_pair(block_view->GetType(), block_ref(*block_view)));
+		this->block_view = std::move(block_view);
+	}
+	void ExpandBlockView() {
+		if (block_view == nullptr) {
+			const auto& [type, ref] = value;
+			block_view = std::make_unique<BlockView>(type, ref);
+		}
+	}
+	void CollapseBlockView() {
+		block_view.reset();
+	}
 };
 
 
 class AnyView : public ItemView {
 public:
-	AnyView(std::unique_ptr<ItemView> child) {
-		RegisterChild(*child);
-		child_type = GetChildType(*child);
-		this->child = std::move(child);
-	}
-	AnyView(DeserializeContext& context) : child_type(context.access<interpreter_ref>()) {
-		child = ConstructChild(child_type, context);
-	}
+	AnyView(std::unique_ptr<ItemView> child) { Set(std::move(child)); }
+	AnyView(DeserializeContext& context) : child_type(context.access<interpreter_ref>()), child(ConstructChild(child_type, context)) {}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	interpreter_ref child_type;
 	std::unique_ptr<ItemView> child;
@@ -178,20 +244,19 @@ private:
 		context.access(child_type);
 		SerializeChild(context, *child);
 	}
+
+public:
+	void Set(std::unique_ptr<ItemView> child) {
+		RegisterChild(*child);
+		child_type = GetChildType(*child);
+		this->child = std::move(child);
+		DataUpdated();
+	}
 };
 
 class ArrayView : public ItemView {
 public:
-	ArrayView(interpreter_ref child_type, std::vector<std::unique_ptr<ItemView>> child_list) {
-		for (size_t i = 0; i < child_list.size(); ++i) {
-			RegisterChild(*child_list[i]);
-			if (child_type != GetChildType(*child_list[i])) {
-				throw std::invalid_argument("child_type mismatch");
-			}
-		}
-		descriptor = std::make_pair(child_list.size(), child_type);
-		this->child_list = std::move(child_list);
-	}
+	ArrayView(interpreter_ref child_type, std::vector<std::unique_ptr<ItemView>> child_list) { Set(child_type, std::move(child_list)); }
 	ArrayView(interpreter_ref child_type, auto... child) : ArrayView(child_type, [&]() {
 		std::vector<std::unique_ptr<ItemView>> child_list; child_list.reserve(sizeof...(child));
 		(child_list.emplace_back(std::move(child)), ...);
@@ -204,10 +269,12 @@ public:
 			child_list.emplace_back(ConstructChild(child_type, context));
 		}
 	}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	std::pair<size_t, interpreter_ref> descriptor;
 	std::vector<std::unique_ptr<ItemView>> child_list;
@@ -218,18 +285,24 @@ private:
 			SerializeChild(context, *child);
 		}
 	}
+
+public:
+	void Set(interpreter_ref child_type, std::vector<std::unique_ptr<ItemView>> child_list) {
+		for (size_t i = 0; i < child_list.size(); ++i) {
+			RegisterChild(*child_list[i]);
+			if (child_type != GetChildType(*child_list[i])) {
+				throw std::invalid_argument("child_type mismatch");
+			}
+		}
+		descriptor = std::make_pair(child_list.size(), child_type);
+		this->child_list = std::move(child_list);
+		DataUpdated();
+	}
 };
 
 class TupleView : public ItemView {
 public:
-	TupleView(std::vector<std::unique_ptr<ItemView>> child_list) {
-		descriptor.reserve(child_list.size());
-		for (size_t i = 0; i < child_list.size(); ++i) {
-			RegisterChild(*child_list[i]);
-			descriptor.emplace_back(GetChildType(*child_list[i]));
-		}
-		this->child_list = std::move(child_list);
-	}
+	TupleView(std::vector<std::unique_ptr<ItemView>> child_list) { Set(std::move(child_list)); }
 	TupleView(auto... child) : TupleView([&]() {
 		std::vector<std::unique_ptr<ItemView>> child_list; child_list.reserve(sizeof...(child));
 		(child_list.emplace_back(std::move(child)), ...);
@@ -242,10 +315,12 @@ public:
 			child_list.emplace_back(ConstructChild(descriptor[i], context));
 		}
 	}
+
 public:
 	static const interpreter_ref type;
 private:
 	virtual interpreter_ref GetType() const override { return type; }
+
 private:
 	std::vector<interpreter_ref> descriptor;
 	std::vector<std::unique_ptr<ItemView>> child_list;
@@ -256,11 +331,43 @@ private:
 			SerializeChild(context, *child);
 		}
 	}
+
+public:
+	void Set(std::vector<std::unique_ptr<ItemView>> child_list) {
+		descriptor.clear();
+		descriptor.reserve(child_list.size());
+		for (size_t i = 0; i < child_list.size(); ++i) {
+			RegisterChild(*child_list[i]);
+			descriptor.emplace_back(GetChildType(*child_list[i]));
+		}
+		this->child_list = std::move(child_list);
+		DataUpdated();
+	}
 };
 
 class UnionView : public ItemView {
 public:
-	UnionView(std::vector<interpreter_ref> descriptor, std::unique_ptr<ItemView> child) {
+	UnionView(std::vector<interpreter_ref> descriptor, std::unique_ptr<ItemView> child) { Set(std::move(descriptor), std::move(child)); }
+	UnionView(DeserializeContext& context) : descriptor(context.access<std::vector<interpreter_ref>>()), index(context.access<size_t>()), child(ConstructChild(descriptor[index], context)) {}
+
+public:
+	static const interpreter_ref type;
+private:
+	virtual interpreter_ref GetType() const override { return type; }
+
+private:
+	std::vector<interpreter_ref> descriptor;
+	size_t index;
+	std::unique_ptr<ItemView> child;
+private:
+	virtual void Serialize(SerializeContext& context) const override {
+		context.access(descriptor);
+		context.access(index);
+		SerializeChild(context, *child);
+	}
+
+public:
+	void Set(std::vector<interpreter_ref> descriptor, std::unique_ptr<ItemView> child) {
 		std::unordered_map<interpreter_ref, size_t> descriptor_index_map;
 		for (size_t i = 0; i < descriptor.size(); ++i) {
 			auto [it, success] = descriptor_index_map.emplace(descriptor[i], i);
@@ -276,23 +383,17 @@ public:
 		this->descriptor = std::move(descriptor);
 		this->index = it->second;
 		this->child = std::move(child);
+		DataUpdated();
 	}
-	UnionView(DeserializeContext& context) : descriptor(context.access<std::vector<interpreter_ref>>()), index(context.access<size_t>()) {
-		child = ConstructChild(descriptor[index], context);
-	}
-public:
-	static const interpreter_ref type;
-private:
-	virtual interpreter_ref GetType() const override { return type; }
-private:
-	std::vector<interpreter_ref> descriptor;
-	size_t index;
-	std::unique_ptr<ItemView> child;
-private:
-	virtual void Serialize(SerializeContext& context) const override {
-		context.access(descriptor);
-		context.access(index);
-		SerializeChild(context, *child);
+	void Set(std::unique_ptr<ItemView> child) {
+		RegisterChild(*child);
+		auto it = std::find(descriptor.begin(), descriptor.end(), GetChildType(*child));
+		if (it == descriptor.end()) {
+			throw std::invalid_argument("child type not found");
+		}
+		this->index = it - descriptor.begin();
+		this->child = std::move(child);
+		DataUpdated();
 	}
 };
 
