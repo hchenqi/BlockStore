@@ -1,4 +1,5 @@
 #include "BlockStore/Item/OrderedRefMap.h"
+#include "BlockStore/utility/type_map.h"
 #include "CppSerialize/stl/string.h"
 
 #include <iostream>
@@ -48,18 +49,12 @@ void print(const auto& container) {
 }
 
 
-template<class T>
-struct CacheType {
-	using Type = BlockCacheDynamicAdapter<T>;
-};
-
-template<>
-struct CacheType<std::string> {
-	using Type = BlockCache<std::string>;
-};
+using CacheMap = TypeMap<
+	TypeMapEntry<std::string, BlockCache<std::string>>
+>;
 
 template<class T>
-using Cache = CacheType<T>::Type;
+using Cache = MappedTypeOr<CacheMap, T, BlockCacheDynamicAdapter<T>>;
 
 
 int main() {
